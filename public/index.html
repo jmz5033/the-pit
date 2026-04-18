@@ -1702,7 +1702,7 @@ function renderHistory(rows, settlements) {
       const settledFromMe = (settled[MY_NAME]||{})[n] || 0;
       const net = (theyOwe - iOwe) - (settledFromThem - settledFromMe);
       const settleArg = esc(JSON.stringify({other: n, amount: net}));
-      const settleBtn = `<button class="btn btn-ghost btn-sm" style="margin-left:8px;font-size:9px;padding:2px 8px;vertical-align:middle" onclick="settleBeers(${settleArg})">Settle</button>`;
+      const settleBtn = `<button class="btn btn-ghost btn-sm" style="margin-left:8px;font-size:9px;padding:2px 8px;vertical-align:middle" onclick="settleBeers(${settleArg})">Settle Up</button>`;
       if (net > 0) beerLines.push(`<span style="color:var(--green)">🍺 ${esc(n)} owes you ${net} beer${net>1?'s':''}</span>${settleBtn}`);
       else if (net < 0) beerLines.push(`<span style="color:var(--red)">🍺 You owe ${esc(n)} ${Math.abs(net)} beer${Math.abs(net)>1?'s':''}</span>${settleBtn}`);
       else if (iOwe + theyOwe > 0) beerLines.push(`<span style="color:var(--muted2)">🍺 All square with ${esc(n)}</span>`);
