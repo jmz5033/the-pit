@@ -116,11 +116,14 @@ export default {
           }),
         });
         const data = await response.json();
+        if (!response.ok) {
+          const upstream = data?.error?.message || data?.error?.type || `status ${response.status}`;
+          return json({ error: `upstream: ${upstream}` }, 502);
+        }
         const text = data?.content?.find?.((c) => c.type === 'text')?.text || '';
-        if (!response.ok) return json({ error: 'upstream error' }, 502);
         return json({ text });
-      } catch {
-        return json({ error: 'upstream error' }, 502);
+      } catch (e) {
+        return json({ error: `fetch failed: ${e.message}` }, 502);
       }
     }
     return env.ASSETS.fetch(request);

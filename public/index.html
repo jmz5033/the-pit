@@ -1985,6 +1985,7 @@ async function toggleRecap(weekStart) {
       })
     });
     const data = await response.json();
+    if (data.error) throw new Error(data.error);
     const text = data.text || '';
     if (!text) throw new Error('empty recap');
 
@@ -1997,7 +1998,7 @@ async function toggleRecap(weekStart) {
     el.innerHTML = '';
     el.style.display = 'none';
     btn.innerHTML = '▸ 📝 Weekly Recap';
-    showToast('Recap failed — check API key', 'error');
+    showToast(`Recap failed: ${e.message || 'unknown error'}`, 'error');
   }
 }
 
