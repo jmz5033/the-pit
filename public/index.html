@@ -1636,15 +1636,18 @@ async function submitDraft() {
 async function loadHistory() {
   show('hist-loading'); hide('hist-body');
   try {
-    const rows = await sb('sdl_weeks?order=week_start.desc&limit=30&select=*') || [];
-    renderHistory(rows);
+    const [rows, settlements] = await Promise.all([
+      sb('sdl_weeks?order=week_start.desc&limit=30&select=*'),
+      sb('sdl_settlements?select=*')
+    ]);
+    renderHistory(rows || [], settlements || []);
   } catch(e) {
-    document.getElementById('hist-body').innerHTML = `<div class="error-bar">${e.message}</div>`;
+    document.getElementById('hist-body').innerHTML = `<div class="error-bar">${esc(e.message)}</div>`;
     show('hist-body'); hide('hist-loading');
   }
 }
 
-function renderHistory(rows) {
+function renderHistory(rows, settlements) {
   hide('hist-loading');
   const el = document.getElementById('hist-body');
   el.classList.remove('hidden');
@@ -1682,16 +1685,27 @@ function renderHistory(rows) {
       }
     }
 
-    // Build beer summary from MY_NAME's perspective
+    // Roll up settlements: settled[from][to] = total beers already paid
+    const settled = {};
+    for (const s of (settlements||[])) {
+      if (!settled[s.from_player]) settled[s.from_player] = {};
+      settled[s.from_player][s.to_player] = (settled[s.from_player][s.to_player] || 0) + (Number(s.beers) || 0);
+    }
+
+    // Build beer summary from MY_NAME's perspective (raw tally minus settlements)
     const beerLines = [];
     for (const n of allPlayerNames) {
       if (n === MY_NAME) continue;
       const iOwe = (beersOwed[MY_NAME]||{})[n] || 0;
       const theyOwe = (beersOwed[n]||{})[MY_NAME] || 0;
-      const net = theyOwe - iOwe;
-      if (net > 0) beerLines.push(`<span style="color:var(--green)">🍺 ${esc(n)} owes you ${net} beer${net>1?'s':''}</span>`);
-      else if (net < 0) beerLines.push(`<span style="color:var(--red)">🍺 You owe ${esc(n)} ${Math.abs(net)} beer${Math.abs(net)>1?'s':''}</span>`);
-      else if (iOwe > 0) beerLines.push(`<span style="color:var(--muted2)">🍺 All square with ${esc(n)}</span>`);
+      const settledFromThem = (settled[n]||{})[MY_NAME] || 0;
+      const settledFromMe = (settled[MY_NAME]||{})[n] || 0;
+      const net = (theyOwe - iOwe) - (settledFromThem - settledFromMe);
+      const settleArg = esc(JSON.stringify({other: n, amount: net}));
+      const settleBtn = `<button class="btn btn-ghost btn-sm" style="margin-left:8px;font-size:9px;padding:2px 8px;vertical-align:middle" onclick="settleBeers(${settleArg})">Settle</button>`;
+      if (net > 0) beerLines.push(`<span style="color:var(--green)">🍺 ${esc(n)} owes you ${net} beer${net>1?'s':''}</span>${settleBtn}`);
+      else if (net < 0) beerLines.push(`<span style="color:var(--red)">🍺 You owe ${esc(n)} ${Math.abs(net)} beer${Math.abs(net)>1?'s':''}</span>${settleBtn}`);
+      else if (iOwe + theyOwe > 0) beerLines.push(`<span style="color:var(--muted2)">🍺 All square with ${esc(n)}</span>`);
     }
 
     html += `<div class="section-title">Season Standings</div>
@@ -1751,6 +1765,26 @@ function renderHistory(rows) {
   }
 
   el.innerHTML = html;
+}
+
+async function settleBeers(args) {
+  const other = String(args?.other || '');
+  const amount = Number(args?.amount) || 0;
+  if (!other || !amount) return;
+  const absAmt = Math.abs(amount);
+  const msg = amount > 0
+    ? `Mark ${other}'s ${absAmt} beer${absAmt>1?'s':''} as paid? This zeros the tab.`
+    : `Settle up with ${other} for ${absAmt} beer${absAmt>1?'s':''}? This zeros the tab.`;
+  if (!confirm(msg)) return;
+  const from_player = amount > 0 ? other : MY_NAME;
+  const to_player   = amount > 0 ? MY_NAME : other;
+  try {
+    await sb('sdl_settlements', 'POST', { from_player, to_player, beers: absAmt });
+    showToast('Tab settled. 🍺', 'success');
+    await loadHistory();
+  } catch(e) {
+    showToast('Settle failed: ' + e.message, 'error');
+  }
 }
 
 function computeAllScores(r) {
