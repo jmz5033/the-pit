@@ -1916,9 +1916,18 @@ async function toggleRecap(weekStart) {
   } catch(e) { showToast('Could not load week data', 'error'); return; }
   if (!weekData) return;
 
-  // Show loading state
+  // Expand immediately
   el.style.display = '';
   btn.innerHTML = '▾ 📝 Weekly Recap';
+
+  // If we already have a saved recap, just render it — no API call
+  if (typeof weekData.recap === 'string' && weekData.recap.trim()) {
+    renderRecap(el, weekData.recap);
+    el.dataset.loaded = '1';
+    return;
+  }
+
+  // Loading state for first-time generation
   el.innerHTML = `<div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);padding:12px 0;display:flex;align-items:center;gap:8px"><span class="spinner"></span>Generating recap…</div>`;
 
   // Build the data context for Claude
@@ -1976,19 +1985,27 @@ async function toggleRecap(weekStart) {
       })
     });
     const data = await response.json();
-    const text = data.text || 'Could not generate recap.';
+    const text = data.text || '';
+    if (!text) throw new Error('empty recap');
 
-    el.innerHTML = `<div style="margin-top:12px;padding:14px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;border-left:3px solid var(--accent)">
-      <div style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">📝 Weekly Recap</div>
-      <div style="font-family:'Syne',sans-serif;font-size:13px;line-height:1.6;color:var(--ink)">${esc(text).replace(/\n/g,'<br>')}</div>
-    </div>`;
+    renderRecap(el, text);
     el.dataset.loaded = '1';
+
+    // Persist so future clicks (and other players) skip the API
+    sb(`sdl_weeks?id=eq.${weekData.id}`, 'PATCH', { recap: text }).catch(() => {});
   } catch(e) {
     el.innerHTML = '';
     el.style.display = 'none';
     btn.innerHTML = '▸ 📝 Weekly Recap';
     showToast('Recap failed — check API key', 'error');
   }
+}
+
+function renderRecap(el, text) {
+  el.innerHTML = `<div style="margin-top:12px;padding:14px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;border-left:3px solid var(--accent)">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">📝 Weekly Recap</div>
+    <div style="font-family:'Syne',sans-serif;font-size:13px;line-height:1.6;color:var(--ink)">${esc(text).replace(/\n/g,'<br>')}</div>
+  </div>`;
 }
 
 // ─── WINNER CELEBRATION ───────────────────────────────────────────────────────
