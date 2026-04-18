@@ -643,6 +643,10 @@ const AI_PROXY_URL = '/api/recap';
 const SEED_POOL = ['NVDA','MSFT','AAPL','META','AVGO','AMZN','GOOGL','TSLA','AMD','TSM','SMCI','PLTR','PATH','COIN','MSTR','GEV','VRT','CEG','VST','AEP','FSLR','FLNC','ARRY','NUE','GRID','NIO','RKLB','IONQ','ACHR','JOBY','RIVN','LCID','AEHR','WOLF','ON','ENPH','SEDG','JPM','BAC','GS','V','MA','UNH','LLY','ABBV','SPY','QQQ','XLE','XLK','APLD','SHLS','STEM'];
 function shuffleSeed() { const a=[...SEED_POOL]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a.slice(0,30); }
 
+// ─── HTML ESCAPE ──────────────────────────────────────────────────────────────
+const ESC_MAP = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ESC_MAP[c]); }
+
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const BUDGET = 100000, MIN_ALLOC = 5000, MAX_ALLOC = 40000, MAX_PICKS = 10, MAX_PER_SECTOR = 2;
 
@@ -893,7 +897,7 @@ function drawChart(rosters, open, daily, livePrices) {
       const cls = lastPnl >= 0 ? 'green' : 'red';
       return `<div class="chart-legend-item">
         <div class="chart-legend-dot" style="background:${s.color}"></div>
-        <span style="color:var(--ink)">${s.player}</span>
+        <span style="color:var(--ink)">${esc(s.player)}</span>
         <span class="${cls}">${sign}$${Math.abs(lastPnl).toLocaleString('en-US',{maximumFractionDigits:0})}</span>
       </div>`;
     }).join('');
@@ -1056,7 +1060,7 @@ async function initJoinScreen() {
       if (players.length > 0) {
         document.getElementById('join-players-wrap').classList.remove('hidden');
         document.getElementById('join-players-list').innerHTML = players
-          .map(p => `<span class="player-chip">${p}</span>`)
+          .map(p => `<span class="player-chip">${esc(p)}</span>`)
           .join('');
       }
     }
@@ -1071,7 +1075,7 @@ async function joinLeague() {
   localStorage.setItem('pit_name', name);
   hide('view-join'); show('view-app');
   document.getElementById('settings-name').textContent = name;
-  document.getElementById('header-meta').innerHTML = `Real market data · Mon–Fri<br>Playing as <strong style="color:var(--accent)">${name}</strong>`;
+  document.getElementById('header-meta').innerHTML = `Real market data · Mon–Fri<br>Playing as <strong style="color:var(--accent)">${esc(name)}</strong>`;
   loadWeek();
   loadHistory();
   showToast(`Welcome to The Pit, ${name}!`, 'success', 3000);
@@ -1253,8 +1257,8 @@ async function renderWeek() {
         <div style="position:absolute;top:0;left:0;right:0;height:2px;background:${pColor};opacity:${isLead?1:0.5}"></div>
         ${isLead ? '<div class="sc-crown">👑</div>' : ''}
         <div class="sc-rank">${rankLabel}</div>
-        <div class="sc-player" style="color:${pColor}">${ps.name}${isMe?'<span class="sc-you-tag">you</span>':''}</div>
-        <div class="sc-pnl ${ps.done?cls:'muted-c'}" id="sc-pnl-${ps.name.replace(/\s/g,'_')}">${pnlStr}</div>
+        <div class="sc-player" style="color:${pColor}">${esc(ps.name)}${isMe?'<span class="sc-you-tag">you</span>':''}</div>
+        <div class="sc-pnl ${ps.done?cls:'muted-c'}" id="sc-pnl-${esc(ps.name.replace(/\s/g,'_'))}">${pnlStr}</div>
         <div class="sc-sub">dollar P&L this week</div>
       </div>`;
     });
@@ -1411,14 +1415,14 @@ function buildLiveTable(rosters, open, live) {
 
     html += `<tr>
       <td>
-        <div style="font-weight:700;font-size:13px;color:${isMe?pColor:'var(--ink)'}">${pick.ticker}</div>
-        <div style="font-size:10px;color:var(--muted2);margin-top:1px;line-height:1.3">${pick.name||''}</div>
-        <div style="font-size:9px;color:${pColor};margin-top:2px;opacity:0.8">${pick.player}${isMe?' ★':''}</div>
+        <div style="font-weight:700;font-size:13px;color:${isMe?pColor:'var(--ink)'}">${esc(pick.ticker)}</div>
+        <div style="font-size:10px;color:var(--muted2);margin-top:1px;line-height:1.3">${esc(pick.name||'')}</div>
+        <div style="font-size:9px;color:${pColor};margin-top:2px;opacity:0.8">${esc(pick.player)}${isMe?' ★':''}</div>
       </td>
       <td style="font-size:11px;color:var(--muted2);text-align:right">$${(pick.allocation/1000).toFixed(0)}k</td>
       <td style="text-align:right">${fmtPct(dayPct)}</td>
       <td style="text-align:right">${fmtPct(weekPct)}</td>
-      <td class="${pnlCls}" style="font-weight:700;text-align:right;font-size:12px" data-price-ticker="${pick.ticker}">${pnl!==null?pnlSign+'$'+Math.abs(pnl).toLocaleString('en-US',{maximumFractionDigits:0}):'—'}</td>
+      <td class="${pnlCls}" style="font-weight:700;text-align:right;font-size:12px" data-price-ticker="${esc(pick.ticker)}">${pnl!==null?pnlSign+'$'+Math.abs(pnl).toLocaleString('en-US',{maximumFractionDigits:0}):'—'}</td>
     </tr>`;
   }
   html += '</tbody></table></div>';
@@ -1430,7 +1434,7 @@ function buildRosterView(player, picks, open, live, isMe=false) {
   const total = picks.reduce((s,p) => s + (calcPnl(p,open,live)||0), 0);
   const cls = total > 0 ? 'green' : total < 0 ? 'red' : 'muted-c';
   const sign = total > 0 ? '+' : '';
-  let html = `<div class="section-title">${player}'s Roster${isMe?' (you)':''} &nbsp;<span class="${cls}">${sign}$${Math.abs(total).toLocaleString('en-US',{maximumFractionDigits:0})}</span></div>
+  let html = `<div class="section-title">${esc(player)}'s Roster${isMe?' (you)':''} &nbsp;<span class="${cls}">${sign}$${Math.abs(total).toLocaleString('en-US',{maximumFractionDigits:0})}</span></div>
   <div class="picks-table-wrap"><table class="picks-table" style="table-layout:fixed">
     <colgroup><col style="width:50%"><col style="width:18%"><col style="width:32%"></colgroup>
     <thead><tr><th>Stock</th><th>Alloc</th><th style="text-align:right">P&L</th></tr></thead><tbody>`;
@@ -1440,9 +1444,9 @@ function buildRosterView(player, picks, open, live, isMe=false) {
     const sign2 = pnl > 0 ? '+' : '';
     html += `<tr>
       <td>
-        <div style="font-weight:700;font-size:13px">${p.ticker}</div>
-        <div style="font-size:10px;color:var(--muted2);margin-top:1px">${p.name||''}</div>
-        <div style="font-size:9px;color:var(--muted);margin-top:2px">${p.sector||''}</div>
+        <div style="font-weight:700;font-size:13px">${esc(p.ticker)}</div>
+        <div style="font-size:10px;color:var(--muted2);margin-top:1px">${esc(p.name||'')}</div>
+        <div style="font-size:9px;color:var(--muted);margin-top:2px">${esc(p.sector||'')}</div>
       </td>
       <td style="font-size:11px;color:var(--muted2)">$${(p.allocation/1000).toFixed(0)}k</td>
       <td class="${cls2}" style="font-weight:700;text-align:right">${pnl!==null?sign2+'$'+Math.abs(pnl).toLocaleString('en-US',{maximumFractionDigits:0}):'—'}</td>
@@ -1466,7 +1470,7 @@ function renderDraftPane() {
   for (const p of picks) { const s = p.sector||'Unknown'; sectorCount[s] = (sectorCount[s]||0)+1; }
   const validation = validatePicks(picks, sectorCount, totalAllocated);
 
-  let html = `<div style="font-size:14px;font-weight:700;margin-bottom:12px">Your Draft — ${MY_NAME}</div>
+  let html = `<div style="font-size:14px;font-weight:700;margin-bottom:12px">Your Draft — ${esc(MY_NAME)}</div>
   <div class="alloc-panel">
     <div class="alloc-header">
       <span class="alloc-title">Budget</span>
@@ -1495,9 +1499,9 @@ function renderDraftPane() {
       const overSector = (sectorCount[p.sector||'Unknown']||0) > MAX_PER_SECTOR;
       html += `<tr>
         <td>
-          <div style="font-weight:700;font-size:13px">${p.ticker}</div>
-          <div style="font-size:10px;color:var(--muted2);margin-top:1px">${p.name||''}</div>
-          <div style="font-size:9px;color:${overSector?'var(--red)':'var(--muted)'};margin-top:2px">${p.sector||'—'}</div>
+          <div style="font-weight:700;font-size:13px">${esc(p.ticker)}</div>
+          <div style="font-size:10px;color:var(--muted2);margin-top:1px">${esc(p.name||'')}</div>
+          <div style="font-size:9px;color:${overSector?'var(--red)':'var(--muted)'};margin-top:2px">${esc(p.sector||'—')}</div>
         </td>
         <td><input class="alloc-input" type="number" min="5000" max="40000" step="1000" value="${p.allocation}"
           onchange="updateAlloc(${i},this.value)" onblur="updateAlloc(${i},this.value)" style="width:100%"></td>
@@ -1537,11 +1541,11 @@ function validatePicks(picks, sectorCount, totalAllocated) {
   else { lines.push(`<span class="v-${totalAllocated>BUDGET?'err':'warn'}">${totalAllocated>BUDGET?'Over budget by $'+(totalAllocated-BUDGET).toLocaleString():'$'+(BUDGET-totalAllocated).toLocaleString()+' unallocated — must equal $100k'}</span>`); ok=false; }
 
   const badMin = picks.filter(p=>p.allocation<MIN_ALLOC);
-  if (badMin.length) { lines.push(`<span class="v-err">✗ ${badMin.map(p=>p.ticker).join(', ')} below $5k min</span>`); ok=false; }
+  if (badMin.length) { lines.push(`<span class="v-err">✗ ${esc(badMin.map(p=>p.ticker).join(', '))} below $5k min</span>`); ok=false; }
   else if (picks.length) lines.push(`<span class="v-ok">✓ All picks ≥ $5k min</span>`);
 
   const badMax = picks.filter(p=>p.allocation>MAX_ALLOC);
-  if (badMax.length) { lines.push(`<span class="v-err">✗ ${badMax.map(p=>p.ticker).join(', ')} above $40k max</span>`); ok=false; }
+  if (badMax.length) { lines.push(`<span class="v-err">✗ ${esc(badMax.map(p=>p.ticker).join(', '))} above $40k max</span>`); ok=false; }
   else if (picks.length) lines.push(`<span class="v-ok">✓ All picks ≤ $40k max</span>`);
 
   const overSectors = Object.entries(sectorCount).filter(([,v])=>v>MAX_PER_SECTOR);
@@ -1685,9 +1689,9 @@ function renderHistory(rows) {
       const iOwe = (beersOwed[MY_NAME]||{})[n] || 0;
       const theyOwe = (beersOwed[n]||{})[MY_NAME] || 0;
       const net = theyOwe - iOwe;
-      if (net > 0) beerLines.push(`<span style="color:var(--green)">🍺 ${n} owes you ${net} beer${net>1?'s':''}</span>`);
-      else if (net < 0) beerLines.push(`<span style="color:var(--red)">🍺 You owe ${n} ${Math.abs(net)} beer${Math.abs(net)>1?'s':''}</span>`);
-      else if (iOwe > 0) beerLines.push(`<span style="color:var(--muted2)">🍺 All square with ${n}</span>`);
+      if (net > 0) beerLines.push(`<span style="color:var(--green)">🍺 ${esc(n)} owes you ${net} beer${net>1?'s':''}</span>`);
+      else if (net < 0) beerLines.push(`<span style="color:var(--red)">🍺 You owe ${esc(n)} ${Math.abs(net)} beer${Math.abs(net)>1?'s':''}</span>`);
+      else if (iOwe > 0) beerLines.push(`<span style="color:var(--muted2)">🍺 All square with ${esc(n)}</span>`);
     }
 
     html += `<div class="section-title">Season Standings</div>
@@ -1697,7 +1701,7 @@ function renderHistory(rows) {
       const sign = (totalPnl[n]||0)>=0?'+':'';
       const pColor = getPlayerColor(n);
       html += `<tr>
-        <td style="color:${pColor}">${n}${n===MY_NAME?' ★':''}</td>
+        <td style="color:${pColor}">${esc(n)}${n===MY_NAME?' ★':''}</td>
         <td style="color:var(--green)">${wins[n]||0}</td>
         <td style="color:var(--muted)">${closed.length-(wins[n]||0)}</td>
         <td class="${cls}">${sign}$${Math.abs(totalPnl[n]||0).toLocaleString('en-US',{maximumFractionDigits:0})}</td>
@@ -1719,28 +1723,29 @@ function renderHistory(rows) {
     const sorted = Object.entries(scores).filter(([,v])=>v!==null).sort((a,b)=>b[1]-a[1]);
     const winner = r.status === 'closed' && sorted.length ? sorted[0][0] : null;
     const badge = r.status === 'closed'
-      ? (winner ? `<span style="color:var(--accent);font-weight:700">🏆 ${winner}</span>` : '<span style="color:var(--muted)">—</span>')
+      ? (winner ? `<span style="color:var(--accent);font-weight:700">🏆 ${esc(winner)}</span>` : '<span style="color:var(--muted)">—</span>')
       : r.status === 'live' ? '<span class="pill pill-live">Live</span>'
       : '<span class="pill pill-draft">Draft</span>';
 
-    const recapId = `recap-${r.week_start}`;
-    const showRecapBtn = r.status === 'closed' && Object.keys(r.prices_daily||{}).length > 0;
+    const weekKey = String(r.week_start || '').replace(/[^\d\-]/g, '').slice(0, 10);
+    const recapId = `recap-${weekKey}`;
+    const showRecapBtn = weekKey && r.status === 'closed' && Object.keys(r.prices_daily||{}).length > 0;
 
     html += `<div class="hist-card">
       <div class="hist-week">
-        <span>Week of ${fmtDate(r.week_start)}</span>
+        <span>Week of ${esc(fmtDate(r.week_start))}</span>
         <span>${badge}</span>
       </div>
       <div class="hist-scores">`;
     for (const [n, v] of sorted) {
       const cls = v>=0?'green':'red';
       const sign = v>=0?'+':'';
-      html += `<span class="hist-score-chip" style="${n===MY_NAME?'border-color:var(--accent);color:var(--accent)':''}">${n}: <span class="${cls}">${sign}$${Math.abs(v).toLocaleString('en-US',{maximumFractionDigits:0})}</span></span>`;
+      html += `<span class="hist-score-chip" style="${n===MY_NAME?'border-color:var(--accent);color:var(--accent)':''}">${esc(n)}: <span class="${cls}">${sign}$${Math.abs(v).toLocaleString('en-US',{maximumFractionDigits:0})}</span></span>`;
     }
     html += `</div>`;
     if (showRecapBtn) {
       html += `<div id="${recapId}" data-loaded="0" style="margin-top:12px;display:none"></div>
-        <button class="btn btn-ghost btn-sm" id="${recapId}-btn" style="margin-top:10px;font-size:10px" onclick="toggleRecap('${r.week_start}')">▸ 📝 Weekly Recap</button>`;
+        <button class="btn btn-ghost btn-sm" id="${recapId}-btn" style="margin-top:10px;font-size:10px" onclick="toggleRecap('${weekKey}')">▸ 📝 Weekly Recap</button>`;
     }
     html += `</div>`;
   }
@@ -1890,6 +1895,7 @@ function flashPriceChanges(newPrices) {
 
 // ─── WEEKLY RECAP (Claude AI) ─────────────────────────────────────────────────
 async function toggleRecap(weekStart) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) return;
   const el = document.getElementById(`recap-${weekStart}`);
   const btn = document.getElementById(`recap-${weekStart}-btn`);
   if (!el || !btn) return;
@@ -1952,42 +1958,29 @@ async function toggleRecap(weekStart) {
   });
 
   const winner = playerSummaries[0]?.player;
-  const fmt = (n) => (n >= 0 ? '+$' : '-$') + Math.abs(n).toLocaleString('en-US', {maximumFractionDigits:0});
-
-  const prompt = `You are a sports commentator writing a short, punchy weekly recap for a stock-picking game called "The Pit". Two friends compete each week picking 10 stocks with a $100k virtual budget. Write 3-4 sentences max. Be vivid, use the actual stock names and numbers, capture the drama and momentum swings. Sound like you're recapping a game, not writing a finance report. Use casual language. Don't use bullet points.
-
-Week: ${weekStart}
-Winner: ${winner}
-
-Player results:
-${playerSummaries.map(ps => `${ps.player}: ${fmt(ps.totalPnl)}
-  Top picks: ${ps.picks.slice(0,3).map(p => `${p.ticker} (${p.pct!==null?(p.pct>=0?'+':'')+p.pct.toFixed(1)+'%':'?'})`).join(', ')}
-  Worst picks: ${ps.picks.slice(-2).map(p => `${p.ticker} (${p.pct!==null?(p.pct>=0?'+':'')+p.pct.toFixed(1)+'%':'?'})`).join(', ')}`).join('\n\n')}
-
-Daily P&L arc (who was leading each day):
-${dailyArc.map((dayArr, i) => {
-  const sorted = [...dayArr].sort((a,b) => b.pnl - a.pnl);
-  return `${dates[i]}: ${sorted.map(d => `${d.player} ${fmt(d.pnl)}`).join(' vs ')}`;
-}).join('\n')}
-
-Write the recap now:`;
 
   try {
     const response = await fetch(AI_PROXY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 300,
-        messages: [{ role: 'user', content: prompt }]
+        weekStart,
+        winner,
+        playerSummaries: playerSummaries.map(ps => ({
+          player: ps.player,
+          totalPnl: ps.totalPnl,
+          picks: ps.picks.map(p => ({ ticker: p.ticker, pct: p.pct }))
+        })),
+        dates,
+        dailyArc: dailyArc.map(day => day.map(d => ({ player: d.player, pnl: d.pnl })))
       })
     });
     const data = await response.json();
-    const text = data.content?.find(c => c.type === 'text')?.text || 'Could not generate recap.';
+    const text = data.text || 'Could not generate recap.';
 
     el.innerHTML = `<div style="margin-top:12px;padding:14px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;border-left:3px solid var(--accent)">
       <div style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">📝 Weekly Recap</div>
-      <div style="font-family:'Syne',sans-serif;font-size:13px;line-height:1.6;color:var(--ink)">${text.replace(/\n/g,'<br>')}</div>
+      <div style="font-family:'Syne',sans-serif;font-size:13px;line-height:1.6;color:var(--ink)">${esc(text).replace(/\n/g,'<br>')}</div>
     </div>`;
     el.dataset.loaded = '1';
   } catch(e) {
