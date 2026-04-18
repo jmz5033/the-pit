@@ -1739,8 +1739,8 @@ function renderHistory(rows) {
     }
     html += `</div>`;
     if (showRecapBtn) {
-      html += `<div id="${recapId}" style="margin-top:12px"></div>
-        <button class="btn btn-ghost btn-sm" style="margin-top:10px;font-size:10px" onclick="loadRecap('${r.week_start}')">📝 Weekly Recap</button>`;
+      html += `<div id="${recapId}" data-loaded="0" style="margin-top:12px;display:none"></div>
+        <button class="btn btn-ghost btn-sm" id="${recapId}-btn" style="margin-top:10px;font-size:10px" onclick="toggleRecap('${r.week_start}')">▸ 📝 Weekly Recap</button>`;
     }
     html += `</div>`;
   }
@@ -1889,10 +1889,18 @@ function flashPriceChanges(newPrices) {
 }
 
 // ─── WEEKLY RECAP (Claude AI) ─────────────────────────────────────────────────
-async function loadRecap(weekStart) {
+async function toggleRecap(weekStart) {
   const el = document.getElementById(`recap-${weekStart}`);
-  const btn = el?.nextElementSibling;
-  if (!el) return;
+  const btn = document.getElementById(`recap-${weekStart}-btn`);
+  if (!el || !btn) return;
+
+  // Already loaded — just toggle visibility
+  if (el.dataset.loaded === '1') {
+    const show = el.style.display === 'none';
+    el.style.display = show ? '' : 'none';
+    btn.innerHTML = show ? '▾ 📝 Weekly Recap' : '▸ 📝 Weekly Recap';
+    return;
+  }
 
   // Find the week data
   let weekData;
@@ -1903,7 +1911,8 @@ async function loadRecap(weekStart) {
   if (!weekData) return;
 
   // Show loading state
-  if (btn) btn.style.display = 'none';
+  el.style.display = '';
+  btn.innerHTML = '▾ 📝 Weekly Recap';
   el.innerHTML = `<div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);padding:12px 0;display:flex;align-items:center;gap:8px"><span class="spinner"></span>Generating recap…</div>`;
 
   // Build the data context for Claude
@@ -1980,9 +1989,11 @@ Write the recap now:`;
       <div style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">📝 Weekly Recap</div>
       <div style="font-family:'Syne',sans-serif;font-size:13px;line-height:1.6;color:var(--ink)">${text.replace(/\n/g,'<br>')}</div>
     </div>`;
+    el.dataset.loaded = '1';
   } catch(e) {
     el.innerHTML = '';
-    if (btn) btn.style.display = '';
+    el.style.display = 'none';
+    btn.innerHTML = '▸ 📝 Weekly Recap';
     showToast('Recap failed — check API key', 'error');
   }
 }
