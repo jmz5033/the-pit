@@ -1708,6 +1708,27 @@ function renderHistory(rows, settlements) {
       else if (iOwe + theyOwe > 0) beerLines.push(`<span style="color:var(--muted2)">🍺 All square with ${esc(n)}</span>`);
     }
 
+    // Lifetime P&L hero — one card per player
+    const lifetimePlayers = [...allPlayerNames].sort((a,b) => {
+      if (a === MY_NAME) return -1;
+      if (b === MY_NAME) return 1;
+      return a.localeCompare(b);
+    });
+    html += `<div class="section-title">Lifetime P&L</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:24px">`;
+    for (const n of lifetimePlayers) {
+      const pnl = totalPnl[n] || 0;
+      const cls = pnl >= 0 ? 'green' : 'red';
+      const sign = pnl >= 0 ? '+' : '-';
+      const pColor = getPlayerColor(n);
+      html += `<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${pColor};border-radius:10px;padding:14px 16px">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:6px">${esc(n)}${n===MY_NAME?' ★':''}</div>
+        <div class="${cls}" style="font-family:'Syne',sans-serif;font-weight:700;font-size:22px">${sign}$${Math.abs(pnl).toLocaleString('en-US',{maximumFractionDigits:0})}</div>
+        <div style="font-size:10px;color:var(--muted2);margin-top:2px">${wins[n]||0}W · ${closed.length-(wins[n]||0)}L · ${closed.length} wk</div>
+      </div>`;
+    }
+    html += `</div>`;
+
     html += `<div class="section-title">Season Standings</div>
     <table class="standings-table"><thead><tr><th>Player</th><th>W</th><th>L</th><th>Total P&L</th></tr></thead><tbody>`;
     for (const n of sortedPlayers) {
