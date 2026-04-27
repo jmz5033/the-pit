@@ -1280,18 +1280,24 @@ async function renderWeek() {
   } else if (!myDone && !draftOpen) {
     html += `<div class="info-bar">📅 <strong>Draft opens Friday 4 PM ET</strong> after the current week's winner is announced.</div>`;
   } else if (myDone) {
-    // Live positions table — only once open prices are snapshotted
+    // Live positions table — only once open prices are snapshotted, and only
+    // reveal everyone's picks after the Sunday 8PM ET lock
     if (Object.keys(WK.prices_open||{}).length > 0) {
-      html += buildLiveTable(rosters, WK.prices_open||{}, livePrices);
+      const visibleRosters = locked ? rosters : { [MY_NAME]: myPicks };
+      html += buildLiveTable(visibleRosters, WK.prices_open||{}, livePrices);
     }
     // My roster always visible
     html += buildRosterView(MY_NAME, myPicks, WK.prices_open||{}, livePrices, true);
   }
 
-  // Other players' rosters — visible as soon as they submit (Option A: reveal at lock)
+  // Other players' rosters — hidden until the Sunday 8PM ET lock
   for (const [player, picks] of Object.entries(rosters)) {
-    if (player !== MY_NAME && (picks||[]).length === MAX_PICKS) {
+    if (player === MY_NAME) continue;
+    if ((picks||[]).length !== MAX_PICKS) continue;
+    if (locked) {
       html += buildRosterView(player, picks, WK.prices_open||{}, livePrices, false);
+    } else {
+      html += `<div class="section-title">${esc(player)}'s Roster &nbsp;<span style="color:var(--muted2);font-size:11px;font-weight:500">🔒 Hidden until Sunday 8 PM ET</span></div>`;
     }
   }
 
@@ -1379,7 +1385,9 @@ function buildLiveTable(rosters, open, live) {
   if (!allPicks.length) return '';
   allPicks.sort((a,b) => (calcPnl(b,open,live)||0) - (calcPnl(a,open,live)||0));
 
-  let html = `<div class="section-title" style="margin-top:4px">All Positions</div>
+  const playerCount = Object.keys(rosters).filter(p => (rosters[p]||[]).length === MAX_PICKS).length;
+  const title = playerCount > 1 ? 'All Positions' : 'Your Positions';
+  let html = `<div class="section-title" style="margin-top:4px">${title}</div>
   <div class="live-table-wrap"><table class="live-table" style="table-layout:fixed">
     <colgroup><col style="width:34%"><col style="width:14%"><col style="width:17%"><col style="width:17%"><col style="width:18%"></colgroup>
     <thead><tr><th>Stock</th><th>Alloc</th><th style="text-align:right">Day %</th><th style="text-align:right">Week %</th><th style="text-align:right">P&L</th></tr></thead><tbody>`;
