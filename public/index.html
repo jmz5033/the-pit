@@ -1663,14 +1663,19 @@ function renderHistory(rows, settlements) {
 
   const closed = rows.filter(r => r.status === 'closed');
   const allPlayerNames = [...new Set(rows.flatMap(r => Object.keys(r.rosters||{})))];
-  const wins = {}, totalPnl = {};
-  for (const n of allPlayerNames) { wins[n] = 0; totalPnl[n] = 0; }
+  const wins = {}, totalPnl = {}, played = {};
+  for (const n of allPlayerNames) { wins[n] = 0; totalPnl[n] = 0; played[n] = 0; }
 
   for (const r of closed) {
     const scores = computeAllScores(r);
     const sorted = Object.entries(scores).filter(([,v])=>v!==null).sort((a,b)=>b[1]-a[1]);
     if (sorted.length && sorted[0][1] !== null) wins[sorted[0][0]] = (wins[sorted[0][0]]||0)+1;
-    for (const [n,v] of Object.entries(scores)) if (v !== null) totalPnl[n] = (totalPnl[n]||0)+v;
+    for (const [n,v] of Object.entries(scores)) {
+      if (v !== null) {
+        totalPnl[n] = (totalPnl[n]||0)+v;
+        played[n] = (played[n]||0)+1;
+      }
+    }
   }
 
   let html = '';
@@ -1725,7 +1730,7 @@ function renderHistory(rows, settlements) {
       html += `<tr>
         <td style="color:${pColor}">${esc(n)}${n===MY_NAME?' ★':''}</td>
         <td style="color:var(--green)">${wins[n]||0}</td>
-        <td style="color:var(--muted)">${closed.length-(wins[n]||0)}</td>
+        <td style="color:var(--muted)">${(played[n]||0)-(wins[n]||0)}</td>
         <td class="${cls}">${sign}$${Math.abs(totalPnl[n]||0).toLocaleString('en-US',{maximumFractionDigits:0})}</td>
       </tr>`;
     }
