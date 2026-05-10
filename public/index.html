@@ -655,6 +655,8 @@ let MY_NAME = '';
 let WK = null;
 let draftPicks = [];
 let seedList = [];
+let _draftSaveTimer = null;
+let _draftSaveStatus = ''; // '', 'saving', 'saved', 'error'
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
 async function sb(path, method='GET', body=null) {
@@ -1325,7 +1327,12 @@ async function renderWeek() {
   }
 
   if (!myDone && draftOpen && !locked) {
-    draftPicks = [...(myPicks)];
+    const savedDraft = (WK.draft_picks||{})[MY_NAME];
+    if (Array.isArray(savedDraft) && savedDraft.length) {
+      draftPicks = savedDraft.map(p => ({ ...p }));
+    } else {
+      draftPicks = [...(myPicks)];
+    }
     seedList = shuffleSeed();
     renderDraftPane();
   }
@@ -1478,7 +1485,10 @@ function renderDraftPane() {
   for (const p of picks) { const s = p.sector||'Unknown'; sectorCount[s] = (sectorCount[s]||0)+1; }
   const validation = validatePicks(picks, sectorCount, totalAllocated);
 
-  let html = `<div style="font-size:14px;font-weight:700;margin-bottom:12px">Your Draft — ${esc(MY_NAME)}</div>
+  let html = `<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+    <div style="font-size:14px;font-weight:700">Your Draft — ${esc(MY_NAME)}</div>
+    <div id="draft-save-status" style="font-family:'JetBrains Mono',monospace;font-size:10px"></div>
+  </div>
   <div class="alloc-panel">
     <div class="alloc-header">
       <span class="alloc-title">Budget</span>
@@ -1535,6 +1545,7 @@ function renderDraftPane() {
   html += `</div></div>`;
 
   el.innerHTML = html;
+  renderDraftSaveStatus();
   const inp = document.getElementById('ticker-input');
   if (inp) inp.focus();
 }
@@ -1617,11 +1628,45 @@ function addPick(ticker, name, sector) {
   d = Math.max(MIN_ALLOC, Math.min(MAX_ALLOC, d));
   draftPicks.push({ ticker, name, sector, allocation: d });
   showToast(`${ticker} added`, 'success', 1800);
+  scheduleDraftSave();
   renderDraftPane();
 }
 
-function removePick(idx) { draftPicks.splice(idx, 1); renderDraftPane(); }
-function updateAlloc(idx, val) { draftPicks[idx].allocation = parseInt(val)||0; renderDraftPane(); }
+function removePick(idx) { draftPicks.splice(idx, 1); scheduleDraftSave(); renderDraftPane(); }
+function updateAlloc(idx, val) { draftPicks[idx].allocation = parseInt(val)||0; scheduleDraftSave(); renderDraftPane(); }
+
+// Persist the in-progress draft so a refresh or different device can resume.
+function scheduleDraftSave() {
+  if (!WK || !MY_NAME) return;
+  clearTimeout(_draftSaveTimer);
+  _draftSaveStatus = 'saving';
+  renderDraftSaveStatus();
+  _draftSaveTimer = setTimeout(saveDraftToServer, 800);
+}
+
+async function saveDraftToServer() {
+  if (!WK || !MY_NAME) return;
+  try {
+    const next = { ...(WK.draft_picks || {}) };
+    if (draftPicks.length === 0) delete next[MY_NAME];
+    else next[MY_NAME] = draftPicks.map(p => ({ ticker: p.ticker, name: p.name, sector: p.sector, allocation: p.allocation }));
+    await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', { draft_picks: next });
+    WK.draft_picks = next;
+    _draftSaveStatus = 'saved';
+  } catch(e) {
+    _draftSaveStatus = 'error';
+  }
+  renderDraftSaveStatus();
+}
+
+function renderDraftSaveStatus() {
+  const el = document.getElementById('draft-save-status');
+  if (!el) return;
+  if (_draftSaveStatus === 'saving') el.innerHTML = `<span style="color:var(--muted2)">Saving…</span>`;
+  else if (_draftSaveStatus === 'saved') el.innerHTML = `<span style="color:var(--green)">✓ Auto-saved</span>`;
+  else if (_draftSaveStatus === 'error') el.innerHTML = `<span style="color:var(--red)">⚠ Save failed (will retry on next change)</span>`;
+  else el.innerHTML = '';
+}
 
 async function submitDraft() {
   const picks = draftPicks;
@@ -1632,8 +1677,13 @@ async function submitDraft() {
   if (!ok) return;
   try {
     const newRosters = {...(WK.rosters||{}), [MY_NAME]: picks};
-    await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', {rosters: newRosters});
+    const newDraftPicks = {...(WK.draft_picks||{})};
+    delete newDraftPicks[MY_NAME];
+    await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', {rosters: newRosters, draft_picks: newDraftPicks});
     WK.rosters = newRosters;
+    WK.draft_picks = newDraftPicks;
+    clearTimeout(_draftSaveTimer);
+    _draftSaveStatus = '';
     showPickConfirmation();
     showToast('Picks locked in! Good luck this week.', 'success', 4000);
     await renderWeek();
@@ -1821,9 +1871,14 @@ async function resetWeek() {
   try {
     const newRosters = {...(WK.rosters||{})};
     delete newRosters[MY_NAME];
-    await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', {rosters: newRosters});
+    const newDraftPicks = {...(WK.draft_picks||{})};
+    delete newDraftPicks[MY_NAME];
+    await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', {rosters: newRosters, draft_picks: newDraftPicks});
     WK.rosters = newRosters;
+    WK.draft_picks = newDraftPicks;
     draftPicks = [];
+    clearTimeout(_draftSaveTimer);
+    _draftSaveStatus = '';
     loadWeek();
   } catch(e) { showErr('app-err', e.message); }
 }
