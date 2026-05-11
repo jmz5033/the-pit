@@ -1449,8 +1449,11 @@ function buildRosterView(player, picks, open, live, isMe=false) {
   const total = picks.reduce((s,p) => s + (calcPnl(p,open,live)||0), 0);
   const cls = total > 0 ? 'green' : total < 0 ? 'red' : 'muted-c';
   const sign = total > 0 ? '+' : '';
-  let html = `<div class="section-title">${esc(player)}'s Roster${isMe?' (you)':''} &nbsp;<span class="${cls}">${sign}$${Math.abs(total).toLocaleString('en-US',{maximumFractionDigits:0})}</span></div>
-  <div class="picks-table-wrap"><table class="picks-table" style="table-layout:fixed">
+  const slug = String(player).replace(/[^A-Za-z0-9]/g, '_').slice(0, 40) || 'p';
+  const arrow = isMe ? '▾' : '▸';
+  const bodyDisplay = isMe ? '' : 'display:none';
+  let html = `<div class="section-title" style="cursor:pointer;user-select:none" onclick="toggleRoster('${slug}')"><span id="roster-arrow-${slug}" style="display:inline-block;width:14px;color:var(--muted2)">${arrow}</span> ${esc(player)}'s Roster${isMe?' (you)':''} &nbsp;<span class="${cls}">${sign}$${Math.abs(total).toLocaleString('en-US',{maximumFractionDigits:0})}</span></div>
+  <div id="roster-body-${slug}" style="${bodyDisplay}"><div class="picks-table-wrap"><table class="picks-table" style="table-layout:fixed">
     <colgroup><col style="width:50%"><col style="width:18%"><col style="width:32%"></colgroup>
     <thead><tr><th>Stock</th><th>Alloc</th><th style="text-align:right">P&L</th></tr></thead><tbody>`;
   for (const p of picks) {
@@ -1467,8 +1470,17 @@ function buildRosterView(player, picks, open, live, isMe=false) {
       <td class="${cls2}" style="font-weight:700;text-align:right">${pnl!==null?sign2+'$'+Math.abs(pnl).toLocaleString('en-US',{maximumFractionDigits:0}):'—'}</td>
     </tr>`;
   }
-  html += '</tbody></table></div>';
+  html += '</tbody></table></div></div>';
   return html;
+}
+
+function toggleRoster(slug) {
+  const body = document.getElementById(`roster-body-${slug}`);
+  const arrow = document.getElementById(`roster-arrow-${slug}`);
+  if (!body) return;
+  const showing = body.style.display !== 'none';
+  body.style.display = showing ? 'none' : '';
+  if (arrow) arrow.textContent = showing ? '▸' : '▾';
 }
 
 // ─── DRAFT UI ─────────────────────────────────────────────────────────────────
