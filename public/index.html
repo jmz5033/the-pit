@@ -1184,8 +1184,16 @@ async function renderWeek() {
     if (WK.status === 'closed') {
       livePrices = WK.prices_close || {};
     } else if (WK.status === 'live') {
-      livePrices = await fetchLive(allTickers);
-      await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', { prices_live: livePrices });
+      const fresh = await fetchLive(allTickers);
+      if (Object.keys(fresh).length) {
+        // Merge with last-known-good so any tickers Finnhub didn't return
+        // this poll keep their previous price instead of zeroing the P&L.
+        livePrices = { ...(WK.prices_live || {}), ...fresh };
+        await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', { prices_live: livePrices });
+        WK.prices_live = livePrices;
+      } else {
+        livePrices = WK.prices_live || {};
+      }
     }
   }
 
