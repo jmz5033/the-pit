@@ -251,8 +251,11 @@ canvas.pit-chart {
 .hm-ticker { font-size: 12px; font-weight: 700; letter-spacing: 0.5px; line-height: 1.1; }
 .hm-pct { font-size: 10px; opacity: 0.85; margin-top: 2px; }
 
-/* SECTOR DONUT */
-.roster-donut { display: inline-flex; align-items: center; }
+/* SECTOR DONUT + LEGEND */
+.sc-donut { position: absolute; top: 10px; right: 10px; opacity: 0.95; line-height: 0; }
+.sector-legend { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: -4px 0 16px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted2); }
+.sector-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.sector-legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 
 /* MISC */
 .section-title { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; }
@@ -1277,6 +1280,14 @@ async function renderWeek() {
 
     const leader = playerScores.find(p => p.done && p.pnl !== null);
 
+    // Stable sector → color mapping across every visible donut + the legend
+    const donutVisibleRosters = {};
+    for (const ps of playerScores) {
+      if (!ps.done) continue;
+      if (locked || ps.name === MY_NAME) donutVisibleRosters[ps.name] = (rosters[ps.name]||[]);
+    }
+    const scLegendColors = buildSectorColorMap(donutVisibleRosters);
+
     html += '<div class="scoreboard">';
     playerScores.forEach((ps, i) => {
       const isLead = leader && ps.name === leader.name && ps.done;
@@ -1293,16 +1304,19 @@ async function renderWeek() {
       const cardStyle = `border-color:${pColor.replace(')', `,${borderAlpha})`).replace('#','rgba(').replace(/([0-9a-f]{2})/gi, (m,p1,o,s)=>o<1?m:m)};background:linear-gradient(135deg,var(--surface) 60%,${pColor}${Math.round(bgAlpha*255).toString(16).padStart(2,'0')})`;
       // Simpler inline approach:
       const cardBorder = pColor;
+    const showDonut = ps.done && (locked || ps.name === MY_NAME);
+    const playerPicks = (WK.rosters||{})[ps.name] || [];
     html += `<div class="score-card animate-in" style="border-color:${pColor}40;--card-color:${pColor}" >
         <div style="position:absolute;top:0;left:0;right:0;height:2px;background:${pColor};opacity:${isLead?1:0.5}"></div>
-        ${isLead ? '<div class="sc-crown">👑</div>' : ''}
+        ${showDonut ? `<div class="sc-donut" title="Sector allocation">${buildSectorDonut(playerPicks, 52, scLegendColors)}</div>` : ''}
         <div class="sc-rank">${rankLabel}</div>
-        <div class="sc-player" style="color:${pColor}">${esc(ps.name)}${isMe?'<span class="sc-you-tag">you</span>':''}</div>
+        <div class="sc-player" style="color:${pColor}">${isLead?'👑 ':''}${esc(ps.name)}${isMe?'<span class="sc-you-tag">you</span>':''}</div>
         <div class="sc-pnl ${ps.done?cls:'muted-c'}" id="sc-pnl-${esc(ps.name.replace(/\s/g,'_'))}">${pnlStr}</div>
         <div class="sc-sub">dollar P&L this week</div>
       </div>`;
     });
     html += '</div>';
+    html += buildSectorLegend(scLegendColors);
   }
 
   // Chart section — render after el.innerHTML is set
@@ -1559,7 +1573,30 @@ function buildPositionHeatmap(rosters, open, live) {
 
 // ─── SECTOR DONUT ─────────────────────────────────────────────────────────────
 const SECTOR_PALETTE = ['#e8ff47','#3b82f6','#f97316','#22c55e','#e879f9','#a78bfa','#fb7185','#fbbf24','#34d399','#60a5fa','#f472b6'];
-function buildSectorDonut(picks, size=36) {
+
+function buildSectorColorMap(rosters) {
+  // Build a stable sector → color mapping across all visible rosters so the
+  // same sector is the same color on every donut and in the legend.
+  const sectors = new Set();
+  for (const arr of Object.values(rosters || {})) {
+    for (const p of (arr || [])) sectors.add(p.sector || 'Other');
+  }
+  const ordered = [...sectors].sort();
+  const map = {};
+  ordered.forEach((s, i) => { map[s] = SECTOR_PALETTE[i % SECTOR_PALETTE.length]; });
+  return map;
+}
+
+function buildSectorLegend(colorMap) {
+  const entries = Object.entries(colorMap);
+  if (!entries.length) return '';
+  const items = entries.map(([s, c]) =>
+    `<span class="sector-legend-item"><span class="sector-legend-swatch" style="background:${c}"></span>${esc(s)}</span>`
+  ).join('');
+  return `<div class="sector-legend">${items}</div>`;
+}
+
+function buildSectorDonut(picks, size=36, colorMap=null) {
   if (!picks || !picks.length) return '';
   const totals = {};
   for (const p of picks) {
@@ -1568,10 +1605,11 @@ function buildSectorDonut(picks, size=36) {
   }
   const total = Object.values(totals).reduce((s, v) => s + v, 0) || 1;
   const items = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  const colorOf = (sector, fallbackIdx) => (colorMap && colorMap[sector]) || SECTOR_PALETTE[fallbackIdx % SECTOR_PALETTE.length];
   const cx = size/2, cy = size/2, r = size/2 - 1, innerR = r * 0.55;
   if (items.length === 1) {
     return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="vertical-align:middle">
-      <circle cx="${cx}" cy="${cy}" r="${r}" fill="${SECTOR_PALETTE[0]}"><title>${esc(items[0][0])}: 100%</title></circle>
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="${colorOf(items[0][0], 0)}"><title>${esc(items[0][0])}: 100%</title></circle>
       <circle cx="${cx}" cy="${cy}" r="${innerR}" fill="var(--bg)"></circle>
     </svg>`;
   }
@@ -1587,7 +1625,7 @@ function buildSectorDonut(picks, size=36) {
     const iex = cx + innerR * Math.cos(a0), iey = cy + innerR * Math.sin(a0);
     const large = (a1 - a0) > Math.PI ? 1 : 0;
     const d = `M ${sx} ${sy} A ${r} ${r} 0 ${large} 1 ${ex} ${ey} L ${isx} ${isy} A ${innerR} ${innerR} 0 ${large} 0 ${iex} ${iey} Z`;
-    const color = SECTOR_PALETTE[i % SECTOR_PALETTE.length];
+    const color = colorOf(sector, i);
     const pct = ((val / total) * 100).toFixed(0);
     segs += `<path d="${d}" fill="${color}"><title>${esc(sector)}: ${pct}%</title></path>`;
   });
@@ -1602,12 +1640,7 @@ function buildRosterView(player, picks, open, live, isMe=false) {
   const slug = String(player).replace(/[^A-Za-z0-9]/g, '_').slice(0, 40) || 'p';
   const arrow = isMe ? '▾' : '▸';
   const bodyDisplay = isMe ? '' : 'display:none';
-  let html = `<div class="section-title" style="cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px" onclick="toggleRoster('${slug}')">
-    <span style="flex:1">
-      <span id="roster-arrow-${slug}" style="display:inline-block;width:14px;color:var(--muted2)">${arrow}</span> ${esc(player)}'s Roster${isMe?' (you)':''} &nbsp;<span class="${cls}">${sign}$${Math.abs(total).toLocaleString('en-US',{maximumFractionDigits:0})}</span>
-    </span>
-    <span class="roster-donut" title="Sector allocation">${buildSectorDonut(picks, 32)}</span>
-  </div>
+  let html = `<div class="section-title" style="cursor:pointer;user-select:none" onclick="toggleRoster('${slug}')"><span id="roster-arrow-${slug}" style="display:inline-block;width:14px;color:var(--muted2)">${arrow}</span> ${esc(player)}'s Roster${isMe?' (you)':''} &nbsp;<span class="${cls}">${sign}$${Math.abs(total).toLocaleString('en-US',{maximumFractionDigits:0})}</span></div>
   <div id="roster-body-${slug}" style="${bodyDisplay}"><div class="picks-table-wrap"><table class="picks-table" style="table-layout:fixed">
     <colgroup><col style="width:50%"><col style="width:18%"><col style="width:32%"></colgroup>
     <thead><tr><th>Stock</th><th>Alloc</th><th style="text-align:right">P&L</th></tr></thead><tbody>`;
