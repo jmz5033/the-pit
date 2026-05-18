@@ -246,10 +246,19 @@ canvas.pit-chart {
 /* HEATMAP */
 .heatmap-wrap { width: 100%; aspect-ratio: 2 / 1; position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; background: var(--surface); }
 .heatmap { position: absolute; inset: 0; }
-.hm-cell { position: absolute; box-sizing: border-box; border: 2px solid; padding: 4px 6px; color: #fff; font-family: 'JetBrains Mono', monospace; overflow: hidden; transition: transform 0.15s ease; cursor: default; }
+.hm-cell { position: absolute; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.08); padding: 4px 6px; color: #fff; font-family: 'JetBrains Mono', monospace; overflow: hidden; transition: transform 0.15s ease; cursor: pointer; }
 .hm-cell:hover { transform: scale(1.02); z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
 .hm-ticker { font-size: 12px; font-weight: 700; letter-spacing: 0.5px; line-height: 1.1; }
 .hm-pct { font-size: 10px; opacity: 0.85; margin-top: 2px; }
+.hm-owners-dot { position: absolute; top: 4px; right: 6px; font-size: 9px; opacity: 0.7; font-weight: 700; }
+.hm-tooltip { position: absolute; z-index: 20; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); min-width: 180px; max-width: 260px; pointer-events: auto; }
+.hm-tip-ticker { font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
+.hm-tip-meta { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.hm-tip-owners { display: flex; flex-direction: column; gap: 5px; }
+.hm-tip-owner { display: flex; align-items: center; gap: 8px; }
+.hm-tip-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.hm-tip-player { flex: 1; color: var(--ink); }
+.hm-tip-alloc { color: var(--muted2); }
 
 /* SECTOR DONUT + LEGEND */
 .sc-donut { position: absolute; top: 10px; right: 10px; opacity: 0.95; line-height: 0; }
@@ -1538,37 +1547,86 @@ function squarify(items, x0, y0, w, h) {
 }
 
 function buildPositionHeatmap(rosters, open, live) {
-  const picks = [];
+  // Dedupe by ticker — one tile per company, sized by total allocation across
+  // every owner, color by today's % change. Owners list lives on the tile for
+  // the click-tooltip.
+  const byTicker = {};
   for (const [player, arr] of Object.entries(rosters || {})) {
     if (!arr || arr.length !== MAX_PICKS) continue;
     for (const p of arr) {
-      const op = open[p.ticker], lv = live[p.ticker];
-      const pct = (op && lv && op > 0) ? ((lv - op) / op * 100) : null;
-      const pnl = calcPnl(p, open, live);
-      picks.push({ ticker: p.ticker, player, allocation: p.allocation, pct, pnl, value: p.allocation });
+      if (!byTicker[p.ticker]) {
+        const op = open[p.ticker], lv = live[p.ticker];
+        const pct = (op && lv && op > 0) ? ((lv - op) / op * 100) : null;
+        byTicker[p.ticker] = { ticker: p.ticker, pct, totalAlloc: 0, owners: [] };
+      }
+      byTicker[p.ticker].totalAlloc += p.allocation;
+      byTicker[p.ticker].owners.push({ player, allocation: p.allocation });
     }
   }
-  if (!picks.length) return '';
+  const items = Object.values(byTicker).map(it => ({ ...it, value: it.totalAlloc }));
+  if (!items.length) return '';
   const W = 1000, H = 500;
-  const tiles = squarify(picks, 0, 0, W, H);
+  const tiles = squarify(items, 0, 0, W, H);
   const cells = tiles.map(t => {
     const it = t.item;
     const bg = pnlColor(it.pct);
-    const pColor = getPlayerColor(it.player);
     const left = (t.x / W * 100).toFixed(3);
     const top = (t.y / H * 100).toFixed(3);
     const width = (t.w / W * 100).toFixed(3);
     const height = (t.h / H * 100).toFixed(3);
     const sizeOK = t.w >= 70 && t.h >= 36;
     const pctStr = it.pct !== null ? (it.pct >= 0 ? '+' : '') + it.pct.toFixed(1) + '%' : '—';
-    const pnlStr = it.pnl !== null ? (it.pnl >= 0 ? '+$' : '-$') + Math.abs(it.pnl).toLocaleString('en-US', {maximumFractionDigits:0}) : '';
-    const titleText = `${it.ticker} · ${it.player} · ${pctStr}${pnlStr?' · '+pnlStr:''}`;
-    return `<div class="hm-cell" style="left:${left}%;top:${top}%;width:${width}%;height:${height}%;background:${bg};border-color:${pColor}" title="${esc(titleText)}">
+    const ownerCount = it.owners.length;
+    const ownerBadge = ownerCount > 1 ? `<div class="hm-owners-dot">×${ownerCount}</div>` : '';
+    const ownersJson = JSON.stringify({ ticker: it.ticker, pct: it.pct, totalAlloc: it.totalAlloc, owners: it.owners });
+    return `<div class="hm-cell" style="left:${left}%;top:${top}%;width:${width}%;height:${height}%;background:${bg}" data-tile="${esc(ownersJson)}" onclick="showHeatmapTooltip(event)">
+      ${ownerBadge}
       ${sizeOK ? `<div class="hm-ticker">${esc(it.ticker)}</div><div class="hm-pct">${pctStr}</div>` : ''}
     </div>`;
   }).join('');
   return `<div class="section-title" style="margin-top:4px">Position Heatmap</div>
-    <div class="heatmap-wrap"><div class="heatmap">${cells}</div></div>`;
+    <div class="heatmap-wrap"><div class="heatmap">${cells}</div><div id="heatmap-tooltip" class="hm-tooltip" hidden></div></div>`;
+}
+
+function showHeatmapTooltip(e) {
+  const tile = e.currentTarget;
+  const wrap = tile.closest('.heatmap-wrap');
+  const tip = wrap && wrap.querySelector('#heatmap-tooltip');
+  if (!tip) return;
+  let data;
+  try { data = JSON.parse(tile.dataset.tile); } catch { return; }
+  const pctStr = data.pct !== null && data.pct !== undefined ? (data.pct >= 0 ? '+' : '') + Number(data.pct).toFixed(2) + '%' : '—';
+  const sortedOwners = [...data.owners].sort((a, b) => b.allocation - a.allocation);
+  tip.innerHTML = `<div class="hm-tip-ticker">${esc(data.ticker)}</div>
+    <div class="hm-tip-meta">${pctStr} · $${Number(data.totalAlloc).toLocaleString('en-US')} held by ${data.owners.length}</div>
+    <div class="hm-tip-owners">${sortedOwners.map(o => `
+      <div class="hm-tip-owner">
+        <span class="hm-tip-swatch" style="background:${getPlayerColor(o.player)}"></span>
+        <span class="hm-tip-player">${esc(o.player)}</span>
+        <span class="hm-tip-alloc">$${Number(o.allocation).toLocaleString('en-US')}</span>
+      </div>`).join('')}</div>`;
+  // Position tooltip near the tile, clamped inside the heatmap wrap
+  tip.hidden = false;
+  const wrapRect = wrap.getBoundingClientRect();
+  const tileRect = tile.getBoundingClientRect();
+  const tipRect = tip.getBoundingClientRect();
+  let x = tileRect.left - wrapRect.left + tileRect.width / 2 - tipRect.width / 2;
+  let y = tileRect.top - wrapRect.top + tileRect.height + 6;
+  if (y + tipRect.height > wrapRect.height) y = tileRect.top - wrapRect.top - tipRect.height - 6;
+  if (x < 4) x = 4;
+  if (x + tipRect.width > wrapRect.width - 4) x = wrapRect.width - tipRect.width - 4;
+  tip.style.left = `${x}px`;
+  tip.style.top = `${Math.max(4, y)}px`;
+  e.stopPropagation();
+}
+
+if (!window._heatmapTipOutsideInit) {
+  window._heatmapTipOutsideInit = true;
+  document.addEventListener('click', (e) => {
+    if (e.target.closest && (e.target.closest('.hm-cell') || e.target.closest('.hm-tooltip'))) return;
+    const tip = document.getElementById('heatmap-tooltip');
+    if (tip) tip.hidden = true;
+  });
 }
 
 // ─── SECTOR DONUT ─────────────────────────────────────────────────────────────
