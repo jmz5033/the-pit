@@ -676,6 +676,15 @@ async function sb(path, method='GET', body=null) {
 }
 
 // ─── FINNHUB ──────────────────────────────────────────────────────────────────
+// Finnhub free tier only quotes US-listed symbols. Block foreign-exchange
+// suffixes so players can't pick a ticker whose P&L we can never resolve.
+// US share classes are a single letter (BRK.A, BF.B); .L is London → block.
+function isUSSymbol(s) {
+  const m = s && String(s).match(/\.([A-Za-z]+)$/);
+  if (!m) return true;
+  const suf = m[1].toUpperCase();
+  return suf.length === 1 && suf !== 'L';
+}
 async function fhQuote(t) {
   const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${t}&token=${FH_KEY}`);
   if (!r.ok) throw new Error(t);
@@ -691,7 +700,9 @@ async function fhSearch(q) {
   const r = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(q)}&token=${FH_KEY}`);
   if (!r.ok) return [];
   const d = await r.json();
-  return (d.result || []).filter(x => x.type === 'Common Stock' || x.type === 'ETP').slice(0, 5);
+  return (d.result || [])
+    .filter(x => (x.type === 'Common Stock' || x.type === 'ETP') && isUSSymbol(x.displaySymbol || x.symbol))
+    .slice(0, 5);
 }
 async function getQuotesBatch(tickers) {
   const out = {};
@@ -1599,11 +1610,12 @@ async function addBySearch() {
   if (!inp) return;
   const query = inp.value.trim().toUpperCase();
   if (!query) return;
+  if (!isUSSymbol(query)) { showToast('Only US-listed tickers are supported (no foreign exchange suffixes).', 'error'); return; }
   inp.disabled = true; inp.placeholder = 'Looking up…';
   try {
     const profile = await fhProfile(query);
     let name = '', sector = '';
-    if (profile && profile.ticker) {
+    if (profile && profile.ticker && isUSSymbol(profile.ticker)) {
       name = profile.name || query;
       sector = profile.finnhubIndustry || 'Other';
       addPick(profile.ticker, name, sector);
@@ -1611,10 +1623,11 @@ async function addBySearch() {
       const results = await fhSearch(query);
       if (!results.length) { alert(`No US-listed stock found for "${query}".`); return; }
       const best = results[0];
-      const prof = await fhProfile(best.symbol);
-      name = prof?.name || best.description || best.symbol;
+      const sym = best.displaySymbol || best.symbol;
+      const prof = await fhProfile(sym);
+      name = prof?.name || best.description || sym;
       sector = prof?.finnhubIndustry || 'Other';
-      addPick(best.symbol, name, sector);
+      addPick(sym, name, sector);
     }
     inp.value = '';
   } catch(e) { alert('Error: ' + e.message); }
