@@ -260,11 +260,14 @@ canvas.pit-chart {
 .hm-tip-player { flex: 1; color: var(--ink); }
 .hm-tip-alloc { color: var(--muted2); }
 
-/* SECTOR DONUT + LEGEND */
-.sc-donut { position: absolute; top: 10px; right: 10px; opacity: 0.95; line-height: 0; }
-.sector-legend { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: -4px 0 16px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted2); }
-.sector-legend-item { display: inline-flex; align-items: center; gap: 5px; }
-.sector-legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+/* SECTOR DONUT */
+.sc-donut { position: absolute; top: 10px; right: 10px; opacity: 0.95; line-height: 0; cursor: pointer; }
+#donut-tooltip { position: absolute; z-index: 1000; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); min-width: 180px; max-width: 280px; pointer-events: auto; }
+.donut-tip-title { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.donut-tip-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.donut-tip-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.donut-tip-sector { flex: 1; color: var(--ink); }
+.donut-tip-pct { color: var(--muted2); font-weight: 700; min-width: 32px; text-align: right; }
 
 /* MISC */
 .section-title { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; }
@@ -1317,7 +1320,7 @@ async function renderWeek() {
     const playerPicks = (WK.rosters||{})[ps.name] || [];
     html += `<div class="score-card animate-in" style="border-color:${pColor}40;--card-color:${pColor}" >
         <div style="position:absolute;top:0;left:0;right:0;height:2px;background:${pColor};opacity:${isLead?1:0.5}"></div>
-        ${showDonut ? `<div class="sc-donut" title="Sector allocation">${buildSectorDonut(playerPicks, 52, scLegendColors)}</div>` : ''}
+        ${showDonut ? buildSectorDonut(playerPicks, 52, scLegendColors, ps.name) : ''}
         <div class="sc-rank">${rankLabel}</div>
         <div class="sc-player" style="color:${pColor}">${isLead?'👑 ':''}${esc(ps.name)}${isMe?'<span class="sc-you-tag">you</span>':''}</div>
         <div class="sc-pnl ${ps.done?cls:'muted-c'}" id="sc-pnl-${esc(ps.name.replace(/\s/g,'_'))}">${pnlStr}</div>
@@ -1325,7 +1328,6 @@ async function renderWeek() {
       </div>`;
     });
     html += '</div>';
-    html += buildSectorLegend(scLegendColors);
   }
 
   // Chart section — render after el.innerHTML is set
@@ -1645,16 +1647,7 @@ function buildSectorColorMap(rosters) {
   return map;
 }
 
-function buildSectorLegend(colorMap) {
-  const entries = Object.entries(colorMap);
-  if (!entries.length) return '';
-  const items = entries.map(([s, c]) =>
-    `<span class="sector-legend-item"><span class="sector-legend-swatch" style="background:${c}"></span>${esc(s)}</span>`
-  ).join('');
-  return `<div class="sector-legend">${items}</div>`;
-}
-
-function buildSectorDonut(picks, size=36, colorMap=null) {
+function buildSectorDonut(picks, size=36, colorMap=null, player='') {
   if (!picks || !picks.length) return '';
   const totals = {};
   for (const p of picks) {
@@ -1665,29 +1658,79 @@ function buildSectorDonut(picks, size=36, colorMap=null) {
   const items = Object.entries(totals).sort((a, b) => b[1] - a[1]);
   const colorOf = (sector, fallbackIdx) => (colorMap && colorMap[sector]) || SECTOR_PALETTE[fallbackIdx % SECTOR_PALETTE.length];
   const cx = size/2, cy = size/2, r = size/2 - 1, innerR = r * 0.55;
+  const sliceColors = {};
+  items.forEach(([sector], i) => { sliceColors[sector] = colorOf(sector, i); });
+  let svgInner;
   if (items.length === 1) {
-    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="vertical-align:middle">
-      <circle cx="${cx}" cy="${cy}" r="${r}" fill="${colorOf(items[0][0], 0)}"><title>${esc(items[0][0])}: 100%</title></circle>
-      <circle cx="${cx}" cy="${cy}" r="${innerR}" fill="var(--bg)"></circle>
-    </svg>`;
+    svgInner = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${sliceColors[items[0][0]]}"></circle>
+      <circle cx="${cx}" cy="${cy}" r="${innerR}" fill="var(--bg)"></circle>`;
+  } else {
+    let segs = '', acc = 0;
+    items.forEach(([sector, val]) => {
+      const a0 = (acc / total) * 2 * Math.PI - Math.PI/2;
+      const a1 = ((acc + val) / total) * 2 * Math.PI - Math.PI/2;
+      acc += val;
+      const sx = cx + r * Math.cos(a0), sy = cy + r * Math.sin(a0);
+      const ex = cx + r * Math.cos(a1), ey = cy + r * Math.sin(a1);
+      const isx = cx + innerR * Math.cos(a1), isy = cy + innerR * Math.sin(a1);
+      const iex = cx + innerR * Math.cos(a0), iey = cy + innerR * Math.sin(a0);
+      const large = (a1 - a0) > Math.PI ? 1 : 0;
+      const d = `M ${sx} ${sy} A ${r} ${r} 0 ${large} 1 ${ex} ${ey} L ${isx} ${isy} A ${innerR} ${innerR} 0 ${large} 0 ${iex} ${iey} Z`;
+      segs += `<path d="${d}" fill="${sliceColors[sector]}"></path>`;
+    });
+    svgInner = segs;
   }
-  let segs = '';
-  let acc = 0;
-  items.forEach(([sector, val], i) => {
-    const a0 = (acc / total) * 2 * Math.PI - Math.PI/2;
-    const a1 = ((acc + val) / total) * 2 * Math.PI - Math.PI/2;
-    acc += val;
-    const sx = cx + r * Math.cos(a0), sy = cy + r * Math.sin(a0);
-    const ex = cx + r * Math.cos(a1), ey = cy + r * Math.sin(a1);
-    const isx = cx + innerR * Math.cos(a1), isy = cy + innerR * Math.sin(a1);
-    const iex = cx + innerR * Math.cos(a0), iey = cy + innerR * Math.sin(a0);
-    const large = (a1 - a0) > Math.PI ? 1 : 0;
-    const d = `M ${sx} ${sy} A ${r} ${r} 0 ${large} 1 ${ex} ${ey} L ${isx} ${isy} A ${innerR} ${innerR} 0 ${large} 0 ${iex} ${iey} Z`;
-    const color = colorOf(sector, i);
-    const pct = ((val / total) * 100).toFixed(0);
-    segs += `<path d="${d}" fill="${color}"><title>${esc(sector)}: ${pct}%</title></path>`;
+  const tipData = JSON.stringify({
+    player,
+    total,
+    items: items.map(([s, v]) => ({ sector: s, alloc: v, color: sliceColors[s] }))
   });
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="vertical-align:middle">${segs}</svg>`;
+  return `<div class="sc-donut" data-donut="${esc(tipData)}" onclick="showDonutTooltip(event)" title="Click for sector breakdown">
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${svgInner}</svg>
+  </div>`;
+}
+
+function showDonutTooltip(e) {
+  e.stopPropagation();
+  const wrap = e.currentTarget;
+  let data;
+  try { data = JSON.parse(wrap.dataset.donut); } catch { return; }
+  let tip = document.getElementById('donut-tooltip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'donut-tooltip';
+    tip.hidden = true;
+    document.body.appendChild(tip);
+  }
+  const rows = data.items.map(({ sector, alloc, color }) => {
+    const pct = ((alloc / data.total) * 100).toFixed(0);
+    return `<div class="donut-tip-row">
+      <span class="donut-tip-swatch" style="background:${color}"></span>
+      <span class="donut-tip-sector">${esc(sector)}</span>
+      <span class="donut-tip-pct">${pct}%</span>
+    </div>`;
+  }).join('');
+  tip.innerHTML = `<div class="donut-tip-title">${esc(data.player)} · sector mix</div>${rows}`;
+  tip.hidden = false;
+  const wrapRect = wrap.getBoundingClientRect();
+  const tipRect = tip.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let x = wrapRect.left + wrapRect.width / 2 - tipRect.width / 2;
+  let y = wrapRect.bottom + 6;
+  if (y + tipRect.height > vh - 8) y = wrapRect.top - tipRect.height - 6;
+  if (x < 8) x = 8;
+  if (x + tipRect.width > vw - 8) x = vw - tipRect.width - 8;
+  tip.style.left = `${x + window.scrollX}px`;
+  tip.style.top = `${Math.max(8, y + window.scrollY)}px`;
+}
+
+if (!window._donutTipOutsideInit) {
+  window._donutTipOutsideInit = true;
+  document.addEventListener('click', (e) => {
+    if (e.target.closest && (e.target.closest('.sc-donut') || e.target.closest('#donut-tooltip'))) return;
+    const tip = document.getElementById('donut-tooltip');
+    if (tip) tip.hidden = true;
+  });
 }
 
 function buildRosterView(player, picks, open, live, isMe=false) {
