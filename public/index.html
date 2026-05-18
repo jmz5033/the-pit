@@ -113,6 +113,14 @@ input:focus { border-color: var(--accent); }
 /* SEARCH */
 .search-row { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .search-row input { flex: 1; min-width: 120px; }
+.search-wrap { position: relative; flex: 1; min-width: 120px; }
+.search-wrap input { width: 100%; }
+.suggest-list { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; max-height: 280px; overflow-y: auto; z-index: 20; box-shadow: 0 12px 28px rgba(0,0,0,0.45); }
+.suggest-item { padding: 8px 12px; cursor: pointer; border-top: 1px solid var(--border); }
+.suggest-item:first-child { border-top: 0; }
+.suggest-item:hover, .suggest-item.active { background: var(--surface2); }
+.suggest-sym { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; color: var(--accent); }
+.suggest-name { font-size: 10px; color: var(--muted2); margin-top: 2px; }
 
 /* PICKS TABLE */
 .picks-table-wrap { margin-bottom: 20px; }
@@ -1533,7 +1541,10 @@ function renderDraftPane() {
     <div class="alloc-hint">$100k total · $5k min · $40k max · max 2 per sector</div>
   </div>
   <div class="search-row">
-    <input type="text" id="ticker-input" placeholder="Ticker or company name…" onkeydown="if(event.key==='Enter')addBySearch()">
+    <div class="search-wrap">
+      <input type="text" id="ticker-input" autocomplete="off" placeholder="Ticker or company name…" oninput="onTickerInput(event)" onkeydown="onTickerKey(event)">
+      <div id="ticker-suggest" class="suggest-list" hidden></div>
+    </div>
     <button class="btn btn-accent btn-sm" onclick="addBySearch()">+ Add</button>
   </div>`;
 
@@ -1632,6 +1643,93 @@ async function addBySearch() {
     inp.value = '';
   } catch(e) { alert('Error: ' + e.message); }
   finally { inp.disabled = false; inp.placeholder = 'Ticker or company name…'; }
+}
+
+// ─── TICKER TYPEAHEAD ─────────────────────────────────────────────────────────
+let _suggestActive = -1;
+let _suggestResults = [];
+let _suggestTimer = null;
+let _suggestSeq = 0;
+
+function onTickerInput(e) {
+  const q = e.target.value.trim();
+  clearTimeout(_suggestTimer);
+  if (q.length < 1) { hideSuggest(); return; }
+  _suggestTimer = setTimeout(() => fetchSuggestions(q), 300);
+}
+
+async function fetchSuggestions(q) {
+  const seq = ++_suggestSeq;
+  try {
+    const results = await fhSearch(q);
+    if (seq !== _suggestSeq) return;
+    _suggestResults = results;
+    _suggestActive = -1;
+    renderSuggest();
+  } catch { if (seq === _suggestSeq) hideSuggest(); }
+}
+
+function renderSuggest() {
+  const el = document.getElementById('ticker-suggest');
+  if (!el) return;
+  if (!_suggestResults.length) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  el.innerHTML = _suggestResults.map((r, i) => {
+    const sym = r.displaySymbol || r.symbol;
+    return `<div class="suggest-item${i===_suggestActive?' active':''}" onmousedown="event.preventDefault()" onclick="pickSuggest(${i})">
+      <div class="suggest-sym">${esc(sym)}</div>
+      <div class="suggest-name">${esc(r.description||'')}</div>
+    </div>`;
+  }).join('');
+}
+
+function hideSuggest() {
+  const el = document.getElementById('ticker-suggest');
+  if (el) { el.hidden = true; el.innerHTML = ''; }
+  _suggestResults = [];
+  _suggestActive = -1;
+}
+
+async function pickSuggest(i) {
+  const r = _suggestResults[i];
+  if (!r) return;
+  const sym = r.displaySymbol || r.symbol;
+  const inp = document.getElementById('ticker-input');
+  if (inp) inp.value = '';
+  hideSuggest();
+  try {
+    const prof = await fhProfile(sym);
+    const name = prof?.name || r.description || sym;
+    const sector = prof?.finnhubIndustry || 'Other';
+    addPick(sym, name, sector);
+  } catch(e) { showToast('Lookup failed: ' + e.message, 'error'); }
+}
+
+function onTickerKey(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (_suggestActive >= 0 && _suggestResults[_suggestActive]) pickSuggest(_suggestActive);
+    else addBySearch();
+  } else if (e.key === 'ArrowDown') {
+    if (!_suggestResults.length) return;
+    e.preventDefault();
+    _suggestActive = Math.min(_suggestResults.length - 1, _suggestActive + 1);
+    renderSuggest();
+  } else if (e.key === 'ArrowUp') {
+    if (!_suggestResults.length) return;
+    e.preventDefault();
+    _suggestActive = Math.max(0, _suggestActive - 1);
+    renderSuggest();
+  } else if (e.key === 'Escape') {
+    hideSuggest();
+  }
+}
+
+if (!window._suggestOutsideClickInit) {
+  window._suggestOutsideClickInit = true;
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest || !e.target.closest('.search-wrap')) hideSuggest();
+  });
 }
 
 async function addFromSeed(ticker) {
