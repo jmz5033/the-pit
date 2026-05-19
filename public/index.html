@@ -244,13 +244,13 @@ canvas.pit-chart {
 .standings-table td:first-child { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; }
 
 /* HEATMAP */
-.heatmap-wrap { width: 100%; aspect-ratio: 3 / 2; min-height: 480px; position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; background: var(--surface); }
+.heatmap-wrap { width: 100%; aspect-ratio: 2 / 1; position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; background: var(--surface); }
 .heatmap { position: absolute; inset: 0; }
-.hm-cell { position: absolute; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.08); padding: 4px 6px; color: #fff; font-family: 'JetBrains Mono', monospace; overflow: hidden; transition: transform 0.15s ease; cursor: pointer; }
+.hm-cell { position: absolute; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.08); padding: 3px 5px; color: #fff; font-family: 'JetBrains Mono', monospace; overflow: hidden; transition: transform 0.15s ease; cursor: pointer; }
 .hm-cell:hover { transform: scale(1.02); z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
-.hm-ticker { font-size: 12px; font-weight: 700; letter-spacing: 0.5px; line-height: 1.1; }
-.hm-pct { font-size: 10px; opacity: 0.85; margin-top: 2px; }
-.hm-owners-dot { position: absolute; top: 4px; right: 6px; font-size: 9px; opacity: 0.7; font-weight: 700; }
+.hm-ticker { font-weight: 700; letter-spacing: 0.4px; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-pct { opacity: 0.85; margin-top: 1px; line-height: 1; white-space: nowrap; }
+.hm-owners-dot { position: absolute; top: 3px; right: 5px; font-size: 8px; opacity: 0.7; font-weight: 700; }
 .hm-tooltip { position: absolute; z-index: 20; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); min-width: 180px; max-width: 260px; pointer-events: auto; }
 .hm-tip-ticker { font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
 .hm-tip-meta { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
@@ -1576,14 +1576,26 @@ function buildPositionHeatmap(rosters, open, live) {
     const top = (t.y / H * 100).toFixed(3);
     const width = (t.w / W * 100).toFixed(3);
     const height = (t.h / H * 100).toFixed(3);
-    const sizeOK = t.w >= 55 && t.h >= 30;
     const pctStr = it.pct !== null ? (it.pct >= 0 ? '+' : '') + it.pct.toFixed(1) + '%' : '—';
     const ownerCount = it.owners.length;
     const ownerBadge = ownerCount > 1 ? `<div class="hm-owners-dot">×${ownerCount}</div>` : '';
     const ownersJson = JSON.stringify({ ticker: it.ticker, pct: it.pct, totalAlloc: it.totalAlloc, owners: it.owners });
+    // Tiered label rendering: bigger tile → ticker + %, smaller → ticker only,
+    // tiny → nothing. Font scales with the smaller of the two dimensions so
+    // labels stay legible even when the heatmap window is short.
+    const minDim = Math.min(t.w, t.h);
+    let labelHtml = '';
+    if (t.w >= 50 && t.h >= 28) {
+      const tFont = Math.max(9, Math.min(13, Math.round(minDim * 0.32)));
+      const pFont = Math.max(7, tFont - 2);
+      labelHtml = `<div class="hm-ticker" style="font-size:${tFont}px">${esc(it.ticker)}</div><div class="hm-pct" style="font-size:${pFont}px">${pctStr}</div>`;
+    } else if (t.w >= 32 && t.h >= 16) {
+      const tFont = Math.max(8, Math.min(11, Math.round(minDim * 0.42)));
+      labelHtml = `<div class="hm-ticker" style="font-size:${tFont}px">${esc(it.ticker)}</div>`;
+    }
     return `<div class="hm-cell" style="left:${left}%;top:${top}%;width:${width}%;height:${height}%;background:${bg}" data-tile="${esc(ownersJson)}" onclick="showHeatmapTooltip(event)">
       ${ownerBadge}
-      ${sizeOK ? `<div class="hm-ticker">${esc(it.ticker)}</div><div class="hm-pct">${pctStr}</div>` : ''}
+      ${labelHtml}
     </div>`;
   }).join('');
   return `<div class="section-title" style="margin-top:4px">Position Heatmap</div>
