@@ -244,7 +244,7 @@ canvas.pit-chart {
 .standings-table td:first-child { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; }
 
 /* HEATMAP */
-.heatmap-wrap { width: 100%; aspect-ratio: 2 / 1; position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; background: var(--surface); }
+.heatmap-wrap { width: 100%; aspect-ratio: 4 / 3; position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; background: var(--surface); }
 .heatmap { position: absolute; inset: 0; }
 .hm-cell { position: absolute; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.08); padding: 3px 5px; color: #fff; font-family: 'JetBrains Mono', monospace; overflow: hidden; transition: transform 0.15s ease; cursor: pointer; }
 .hm-cell:hover { transform: scale(1.02); z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
@@ -1567,7 +1567,7 @@ function buildPositionHeatmap(rosters, open, live) {
   }
   const items = Object.values(byTicker).map(it => ({ ...it, value: it.totalAlloc }));
   if (!items.length) return '';
-  const W = 1000, H = 500;
+  const W = 1000, H = 750;
   const tiles = squarify(items, 0, 0, W, H);
   const cells = tiles.map(t => {
     const it = t.item;
