@@ -244,7 +244,7 @@ canvas.pit-chart {
 .standings-table td:first-child { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; }
 
 /* HEATMAP */
-.heatmap-wrap { width: 100%; aspect-ratio: 2 / 1; position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; background: var(--surface); }
+.heatmap-wrap { width: 100%; aspect-ratio: 3 / 2; min-height: 480px; position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; background: var(--surface); }
 .heatmap { position: absolute; inset: 0; }
 .hm-cell { position: absolute; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.08); padding: 4px 6px; color: #fff; font-family: 'JetBrains Mono', monospace; overflow: hidden; transition: transform 0.15s ease; cursor: pointer; }
 .hm-cell:hover { transform: scale(1.02); z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
@@ -1576,7 +1576,7 @@ function buildPositionHeatmap(rosters, open, live) {
     const top = (t.y / H * 100).toFixed(3);
     const width = (t.w / W * 100).toFixed(3);
     const height = (t.h / H * 100).toFixed(3);
-    const sizeOK = t.w >= 70 && t.h >= 36;
+    const sizeOK = t.w >= 55 && t.h >= 30;
     const pctStr = it.pct !== null ? (it.pct >= 0 ? '+' : '') + it.pct.toFixed(1) + '%' : '—';
     const ownerCount = it.owners.length;
     const ownerBadge = ownerCount > 1 ? `<div class="hm-owners-dot">×${ownerCount}</div>` : '';
