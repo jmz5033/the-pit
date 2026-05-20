@@ -598,7 +598,7 @@ canvas.pit-chart {
 <header>
   <div><div class="logo">The<br><em>Pit</em></div></div>
   <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
-    <button id="push-btn" class="btn btn-ghost btn-sm" style="font-size:10px;padding:4px 10px" onclick="togglePushReminders()" hidden>🔔 Enable reminders</button>
+    <button id="push-btn" class="btn btn-ghost btn-sm" style="font-size:10px;padding:4px 10px" onclick="togglePushReminders()" hidden>🔔 Enable Push Notifications</button>
     <div class="header-right" id="header-meta">Real market data · Mon–Fri<br>$100k budget · 10 picks · Dollar P&L</div>
   </div>
 </header>
@@ -2749,14 +2749,14 @@ async function updatePushUiState() {
   if (!MY_NAME) { btn.hidden = true; return; }
   if (Notification.permission === 'denied') {
     btn.hidden = false;
-    btn.textContent = '🔕 Reminders blocked';
+    btn.textContent = '🔕 Notifications blocked';
     btn.disabled = true;
     return;
   }
   const sub = await getCurrentSubscription().catch(() => null);
   btn.hidden = false;
   btn.disabled = false;
-  btn.textContent = sub ? '🔔 Reminders on' : '🔔 Enable reminders';
+  btn.textContent = sub ? '🔔 Notifications on' : '🔔 Enable Push Notifications';
 }
 
 async function togglePushReminders() {
@@ -2776,7 +2776,7 @@ async function togglePushReminders() {
         body: JSON.stringify({ endpoint: existing.endpoint }),
       }).catch(() => {});
       await existing.unsubscribe().catch(() => {});
-      showToast('Reminders turned off', 'success');
+      showToast('Notifications turned off', 'success');
       await updatePushUiState();
       return;
     }
@@ -2811,9 +2811,9 @@ async function togglePushReminders() {
       }),
     });
     if (!res.ok) throw new Error(`server returned ${res.status}`);
-    showToast('Reminders enabled — 4 PM ET Sat & Sun', 'success', 3500);
+    showToast('Notifications enabled', 'success', 3500);
   } catch (e) {
-    showToast(`Reminder setup failed: ${e.message || e}`, 'error');
+    showToast(`Notification setup failed: ${e.message || e}`, 'error');
   } finally {
     await updatePushUiState();
   }
