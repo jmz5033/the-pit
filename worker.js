@@ -390,6 +390,40 @@ export default {
       return json({ ok: true });
     }
 
+    if (url.pathname === '/api/vapid-selftest' && request.method === 'GET') {
+      // Sign a known message with the configured VAPID keypair, then verify
+      // it against the *public* half. If the keys aren't a matched pair, the
+      // verify fails and we know to rotate.
+      if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
+        return json({ error: 'forbidden' }, 403);
+      }
+      try {
+        const pubB64 = normalizeVapidPublicKey(env.VAPID_PUBLIC_KEY);
+        const pubRaw = base64UrlToUint8(pubB64);
+        const pubJwk = {
+          kty: 'EC', crv: 'P-256',
+          x: uint8ToBase64Url(pubRaw.slice(1, 33)),
+          y: uint8ToBase64Url(pubRaw.slice(33, 65)),
+          ext: true,
+        };
+        const privKey = await importVapidPrivateKey(env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
+        const pubKey = await crypto.subtle.importKey('jwk', pubJwk,
+          { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+        const msg = enc.encode('vapid-selftest');
+        const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privKey, msg);
+        const verified = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pubKey, sig, msg);
+        return json({
+          publicKeyLen: pubRaw.length,
+          publicKeyStartsWith04: pubRaw[0] === 0x04,
+          privateKeyB64UrlLen: (env.VAPID_PRIVATE_KEY || '').length,
+          keypairMatches: verified,
+          vapidSubject: env.VAPID_SUBJECT || null,
+        });
+      } catch (e) {
+        return json({ error: `selftest failed: ${e.message || e}` }, 500);
+      }
+    }
+
     if (url.pathname === '/api/push' && request.method === 'POST') {
       // Admin-only manual push (broadcast or per-player). Useful for sanity-
       // checking delivery without waiting for the cron, and for sending
