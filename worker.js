@@ -238,7 +238,11 @@ async function sendPush(subscription, payloadStr, env) {
     },
     body,
   });
-  return { ok: res.ok, status: res.status };
+  let detail = '';
+  if (!res.ok) {
+    try { detail = (await res.text()).slice(0, 200); } catch {}
+  }
+  return { ok: res.ok, status: res.status, detail };
 }
 
 // ─── SUPABASE HELPERS ────────────────────────────────────────────────────────
@@ -419,7 +423,7 @@ export default {
             await sbDelete(env, `sdl_push_subscriptions?id=eq.${sub.id}`).catch(() => {});
             cleaned++;
           } else {
-            errors.push(`${sub.player_name}/${endpointKind}: ${r.status}`);
+            errors.push(`${sub.player_name}/${endpointKind}: ${r.status} ${r.detail || ''}`.trim());
           }
         } catch (e) {
           errors.push(`${sub.player_name}/${endpointKind}: ${e.message || e}`);
