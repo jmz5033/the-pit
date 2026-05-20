@@ -597,7 +597,10 @@ canvas.pit-chart {
 
 <header>
   <div><div class="logo">The<br><em>Pit</em></div></div>
-  <div class="header-right" id="header-meta">Real market data · Mon–Fri<br>$100k budget · 10 picks · Dollar P&L</div>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+    <button id="push-btn" class="btn btn-ghost btn-sm" style="font-size:10px;padding:4px 10px" onclick="togglePushReminders()" hidden>🔔 Enable reminders</button>
+    <div class="header-right" id="header-meta">Real market data · Mon–Fri<br>$100k budget · 10 picks · Dollar P&L</div>
+  </div>
 </header>
 
 <!-- JOIN SCREEN -->
@@ -1125,6 +1128,7 @@ async function joinLeague() {
   document.getElementById('header-meta').innerHTML = `Real market data · Mon–Fri<br>Playing as <strong style="color:var(--accent)">${esc(name)}</strong>`;
   loadWeek();
   loadHistory();
+  updatePushUiState();
   showToast(`Welcome to The Pit, ${name}!`, 'success', 3000);
 }
 
@@ -1135,6 +1139,8 @@ function logout() {
   hide('view-app');
   show('view-join');
   document.getElementById('join-name').value = '';
+  const btn = document.getElementById('push-btn');
+  if (btn) btn.hidden = true;
   initJoinScreen();
 }
 
@@ -2719,6 +2725,100 @@ function showWinnerCelebration() {
   document.addEventListener('touchend',   onTouchEnd,   { passive: true });
 })();
 
+// ─── PUSH NOTIFICATIONS ───────────────────────────────────────────────────────
+function urlBase64ToUint8Array(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const base64 = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function getCurrentSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+  const reg = await navigator.serviceWorker.getRegistration('/');
+  if (!reg) return null;
+  return reg.pushManager.getSubscription();
+}
+
+async function updatePushUiState() {
+  const btn = document.getElementById('push-btn');
+  if (!btn) return;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) { btn.hidden = true; return; }
+  if (!MY_NAME) { btn.hidden = true; return; }
+  if (Notification.permission === 'denied') {
+    btn.hidden = false;
+    btn.textContent = '🔕 Reminders blocked';
+    btn.disabled = true;
+    return;
+  }
+  const sub = await getCurrentSubscription().catch(() => null);
+  btn.hidden = false;
+  btn.disabled = false;
+  btn.textContent = sub ? '🔔 Reminders on' : '🔔 Enable reminders';
+}
+
+async function togglePushReminders() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    showToast('Push notifications not supported in this browser', 'error');
+    return;
+  }
+  if (!MY_NAME) { showToast('Join the league first', 'error'); return; }
+  const btn = document.getElementById('push-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const existing = await getCurrentSubscription();
+    if (existing) {
+      await fetch('/api/unsubscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: existing.endpoint }),
+      }).catch(() => {});
+      await existing.unsubscribe().catch(() => {});
+      showToast('Reminders turned off', 'success');
+      await updatePushUiState();
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      showToast('Notification permission denied', 'error');
+      await updatePushUiState();
+      return;
+    }
+    const keyRes = await fetch('/api/vapid-public');
+    const { key } = await keyRes.json();
+    if (!key) {
+      showToast('Push not yet configured on the server', 'error');
+      await updatePushUiState();
+      return;
+    }
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(key),
+    });
+    const sj = sub.toJSON();
+    const res = await fetch('/api/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        player: MY_NAME,
+        endpoint: sj.endpoint,
+        p256dh: sj.keys.p256dh,
+        auth: sj.keys.auth,
+      }),
+    });
+    if (!res.ok) throw new Error(`server returned ${res.status}`);
+    showToast('Reminders enabled — 4 PM ET Sat & Sun', 'success', 3500);
+  } catch (e) {
+    showToast(`Reminder setup failed: ${e.message || e}`, 'error');
+  } finally {
+    await updatePushUiState();
+  }
+}
+
 window.addEventListener('load', async () => {
   await initJoinScreen();
   const saved = localStorage.getItem('pit_name');
@@ -2731,6 +2831,7 @@ window.addEventListener('load', async () => {
     loadWeek();
     loadHistory();
   }
+  updatePushUiState();
 });
 </script>
 </body>
