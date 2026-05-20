@@ -371,6 +371,44 @@ export default {
       return json({ ok: true });
     }
 
+    if (url.pathname === '/api/push' && request.method === 'POST') {
+      // Admin-only manual push (broadcast or per-player). Useful for sanity-
+      // checking delivery without waiting for the cron, and for sending
+      // ad-hoc notifications outside the reminder schedule.
+      if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
+        return json({ error: 'forbidden' }, 403);
+      }
+      let body;
+      try { body = await request.json(); } catch { return json({ error: 'invalid json' }, 400); }
+      const title = typeof body.title === 'string' && body.title ? body.title.slice(0, 80) : 'The Pit';
+      const text = typeof body.body === 'string' ? body.body.slice(0, 200) : '';
+      const targetUrl = typeof body.url === 'string' && body.url.startsWith('/') ? body.url : '/';
+      const player = typeof body.player === 'string' ? body.player : null;
+      const path = player
+        ? `sdl_push_subscriptions?player_name=eq.${encodeURIComponent(player)}&select=*`
+        : `sdl_push_subscriptions?select=*`;
+      const subs = await sbGet(env, path);
+      if (!subs || !subs.length) return json({ sent: 0, cleaned: 0, note: 'no subscriptions' });
+      let sent = 0, cleaned = 0;
+      const errors = [];
+      for (const sub of subs) {
+        const payload = JSON.stringify({ title, body: text, tag: `pit-manual-${Date.now()}`, url: targetUrl });
+        try {
+          const r = await sendPush({ endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth }, payload, env);
+          if (r.ok) sent++;
+          else if (r.status === 404 || r.status === 410) {
+            await sbDelete(env, `sdl_push_subscriptions?id=eq.${sub.id}`).catch(() => {});
+            cleaned++;
+          } else {
+            errors.push(`${sub.player_name}: ${r.status}`);
+          }
+        } catch (e) {
+          errors.push(`${sub.player_name}: ${e.message || e}`);
+        }
+      }
+      return json({ sent, cleaned, errors });
+    }
+
     if (url.pathname === '/api/unsubscribe' && request.method === 'POST') {
       if (!isSameOrigin(request, url)) return json({ error: 'forbidden' }, 403);
       let body;
