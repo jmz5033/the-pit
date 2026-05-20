@@ -408,6 +408,10 @@ export default {
       const errors = [];
       for (const sub of subs) {
         const payload = JSON.stringify({ title, body: text, tag: `pit-manual-${Date.now()}`, url: targetUrl });
+        const endpointKind = sub.endpoint.includes('apple.com') ? 'apns'
+          : sub.endpoint.includes('fcm.googleapis') || sub.endpoint.includes('android.googleapis') ? 'fcm'
+          : sub.endpoint.includes('mozilla') ? 'moz'
+          : 'other';
         try {
           const r = await sendPush({ endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth }, payload, env);
           if (r.ok) sent++;
@@ -415,10 +419,10 @@ export default {
             await sbDelete(env, `sdl_push_subscriptions?id=eq.${sub.id}`).catch(() => {});
             cleaned++;
           } else {
-            errors.push(`${sub.player_name}: ${r.status}`);
+            errors.push(`${sub.player_name}/${endpointKind}: ${r.status}`);
           }
         } catch (e) {
-          errors.push(`${sub.player_name}: ${e.message || e}`);
+          errors.push(`${sub.player_name}/${endpointKind}: ${e.message || e}`);
         }
       }
       return json({ sent, cleaned, errors });
