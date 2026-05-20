@@ -357,13 +357,18 @@ export default {
       const auth = typeof body.auth === 'string' ? body.auth : '';
       if (!player_name || !endpoint || !p256dh || !auth) return json({ error: 'missing fields' }, 400);
       if (!/^https:\/\//.test(endpoint)) return json({ error: 'bad endpoint' }, 400);
+      if (!env.SB_URL || !env.SB_KEY) return json({ error: 'supabase env not configured' }, 500);
       // Upsert by endpoint — resolution=merge-duplicates relies on the unique
       // index on endpoint we added in the migration
       const res = await sbInsert(env, 'sdl_push_subscriptions',
         { player_name, endpoint, p256dh, auth },
         'resolution=merge-duplicates'
       );
-      return json({ ok: res.ok }, res.ok ? 200 : 500);
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        return json({ error: `supabase ${res.status}: ${detail}` }, 500);
+      }
+      return json({ ok: true });
     }
 
     if (url.pathname === '/api/unsubscribe' && request.method === 'POST') {
