@@ -98,6 +98,20 @@ function base64UrlToUint8(s) {
 const enc = new TextEncoder();
 
 // ─── VAPID JWT (ES256) ──────────────────────────────────────────────────────
+function normalizeVapidPublicKey(b64url) {
+  if (!b64url) return '';
+  let raw;
+  try { raw = base64UrlToUint8(b64url); } catch { return b64url; }
+  if (raw.length === 65 && raw[0] === 0x04) return b64url;
+  if (raw.length === 64) {
+    const full = new Uint8Array(65);
+    full[0] = 0x04;
+    full.set(raw, 1);
+    return uint8ToBase64Url(full);
+  }
+  return b64url;
+}
+
 async function importVapidPrivateKey(publicKeyB64Url, privateKeyB64Url) {
   let pub = base64UrlToUint8(publicKeyB64Url);
   // Accept either 65-byte uncompressed (0x04 || x || y) or 64-byte raw (x || y)
@@ -213,10 +227,11 @@ async function sendPush(subscription, payloadStr, env) {
   const endpoint = new URL(subscription.endpoint);
   const jwt = await signVapidJwt(env, endpoint.origin);
   const body = await encryptPushPayload(payloadStr, subscription.p256dh, subscription.auth);
+  const publicKey = normalizeVapidPublicKey(env.VAPID_PUBLIC_KEY);
   const res = await fetch(subscription.endpoint, {
     method: 'POST',
     headers: {
-      'Authorization': `vapid t=${jwt}, k=${env.VAPID_PUBLIC_KEY}`,
+      'Authorization': `vapid t=${jwt}, k=${publicKey}`,
       'Content-Type': 'application/octet-stream',
       'Content-Encoding': 'aes128gcm',
       'TTL': '43200',
@@ -344,7 +359,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === '/api/vapid-public' && request.method === 'GET') {
-      return json({ key: env.VAPID_PUBLIC_KEY || '' });
+      return json({ key: normalizeVapidPublicKey(env.VAPID_PUBLIC_KEY) });
     }
 
     if (url.pathname === '/api/subscribe' && request.method === 'POST') {
