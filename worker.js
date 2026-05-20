@@ -277,6 +277,208 @@ async function sbDelete(env, path) {
   });
 }
 
+async function sbPatch(env, path, row) {
+  return fetch(`${env.SB_URL}/rest/v1/${path}`, {
+    method: 'PATCH',
+    headers: sbHeaders(env, { Prefer: 'return=minimal' }),
+    body: JSON.stringify(row),
+  });
+}
+
+// ─── FRIDAY CLOSE: SNAPSHOT + RECAP + PUSH ────────────────────────────────────
+function computeScores(rosters, open, live) {
+  const scores = {};
+  for (const [player, picks] of Object.entries(rosters || {})) {
+    if (!picks || picks.length !== MAX_PICKS) { scores[player] = null; continue; }
+    let total = 0;
+    for (const p of picks) {
+      const op = open[p.ticker], lv = live[p.ticker];
+      if (op && lv && op > 0) total += (lv - op) * (p.allocation / op);
+    }
+    scores[player] = total;
+  }
+  return scores;
+}
+
+async function snapshotClosePrices(env, week) {
+  if (!env.FH_KEY) throw new Error('FH_KEY not configured');
+  const tickers = new Set();
+  for (const arr of Object.values(week.rosters || {})) {
+    for (const p of (arr || [])) tickers.add(p.ticker);
+  }
+  const prices = {};
+  // Sequential to stay polite to Finnhub's free-tier rate limit
+  for (const t of tickers) {
+    try {
+      const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${env.FH_KEY}`);
+      if (!r.ok) continue;
+      const d = await r.json();
+      if (d && typeof d.c === 'number' && d.c > 0) prices[t] = d.c;
+    } catch {}
+  }
+  return prices;
+}
+
+async function generateRecapAndHeadline(env, week, scores) {
+  const sorted = Object.entries(scores).filter(([, v]) => v !== null).sort((a, b) => b[1] - a[1]);
+  if (!sorted.length) throw new Error('no scored players');
+  const rosters = week.rosters || {};
+  const open = week.prices_open || {};
+  const close = week.prices_close || {};
+  const daily = week.prices_daily || {};
+
+  const playerSummaries = sorted.map(([player, totalPnl]) => {
+    const picks = rosters[player] || [];
+    const tickerPnls = picks.map((pick) => {
+      const op = open[pick.ticker], cl = close[pick.ticker];
+      const pct = (op && cl && op > 0) ? ((cl - op) / op * 100) : null;
+      return { ticker: pick.ticker, pct };
+    }).sort((a, b) => (b.pct === null ? -Infinity : b.pct) - (a.pct === null ? -Infinity : a.pct));
+    return { player, totalPnl, picks: tickerPnls };
+  });
+
+  const dates = Object.keys(daily).sort();
+  const dailyArc = dates.map((date) => {
+    return sorted.map(([player]) => {
+      const picks = rosters[player] || [];
+      let dayPnl = 0;
+      for (const pick of picks) {
+        const op = open[pick.ticker];
+        const dp = daily[date]?.[pick.ticker];
+        if (op && dp) dayPnl += (dp - op) * (pick.allocation / op);
+      }
+      return { player, pnl: Math.round(dayPnl) };
+    });
+  });
+
+  const winner = sorted[0][0];
+  const loser = sorted[sorted.length - 1][0];
+
+  const userPrompt = `Week: ${week.week_start}
+Winner: ${winner}
+Last place: ${loser}
+
+Player results:
+${playerSummaries.map((ps) => `${ps.player}: ${fmt(ps.totalPnl)}
+  Top picks: ${ps.picks.slice(0,3).map(p => `${p.ticker} (${p.pct!==null?(p.pct>=0?'+':'')+p.pct.toFixed(1)+'%':'?'})`).join(', ')}
+  Worst picks: ${ps.picks.slice(-2).map(p => `${p.ticker} (${p.pct!==null?(p.pct>=0?'+':'')+p.pct.toFixed(1)+'%':'?'})`).join(', ')}`).join('\n\n')}
+
+Daily P&L arc:
+${dailyArc.map((dayArr, i) => `${dates[i]}: ${dayArr.map(d => `${d.player} ${fmt(d.pnl)}`).join(' vs ')}`).join('\n')}
+
+Write the recap now.`;
+
+  const systemPrompt = `You are a sports commentator writing a weekly recap for a stock-picking game called "The Pit". Players compete each week picking 10 stocks with a $100k virtual budget.
+
+Output EXACTLY this format, no extra text:
+
+HEADLINE: <one punchy line, max 90 characters, calling out the winner and good-naturedly roasting last place>
+RECAP: <3-4 sentence vivid recap using stock names and numbers, capturing drama and momentum swings. Casual language, no bullet points, no HTML, no markdown.>`;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: ALLOWED_MODEL,
+      max_tokens: 400,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Anthropic ${response.status}: ${data?.error?.message || 'upstream error'}`);
+  }
+  const text = data?.content?.find?.((c) => c.type === 'text')?.text || '';
+  const headlineMatch = text.match(/HEADLINE:\s*(.+?)(?:\n|$)/i);
+  const recapMatch = text.match(/RECAP:\s*([\s\S]+)/i);
+  return {
+    headline: (headlineMatch ? headlineMatch[1] : '').trim().slice(0, 160),
+    recap: (recapMatch ? recapMatch[1] : text).trim(),
+  };
+}
+
+async function handleFridayClose(env) {
+  // Find the live or already-closed week whose week_end is today/recent —
+  // the most recent non-draft row.
+  const weeks = await sbGet(env, 'sdl_weeks?status=neq.draft&order=week_start.desc&limit=1');
+  if (!weeks || !weeks.length) {
+    return { skipped: 'no-week', sent: 0, cleaned: 0 };
+  }
+  const week = weeks[0];
+
+  // 1. Snapshot close prices if we haven't already
+  let closePrices = week.prices_close || {};
+  let mustPatchClose = false;
+  if (Object.keys(closePrices).length === 0) {
+    try {
+      closePrices = await snapshotClosePrices(env, week);
+      mustPatchClose = true;
+    } catch {}
+  }
+  if (mustPatchClose && Object.keys(closePrices).length) {
+    await sbPatch(env, `sdl_weeks?id=eq.${week.id}`, { prices_close: closePrices, status: 'closed' }).catch(() => {});
+    week.prices_close = closePrices;
+    week.status = 'closed';
+  }
+
+  // 2. Generate recap + headline if not already cached
+  const scores = computeScores(week.rosters || {}, week.prices_open || {}, closePrices);
+  let headline = week.recap_headline || '';
+  let recapText = week.recap || '';
+  if (!recapText || !headline) {
+    try {
+      const out = await generateRecapAndHeadline(env, week, scores);
+      headline = out.headline || headline;
+      recapText = out.recap || recapText;
+      await sbPatch(env, `sdl_weeks?id=eq.${week.id}`, { recap: recapText, recap_headline: headline }).catch(() => {});
+    } catch {
+      // No recap — still send the push with a templated body
+    }
+  }
+
+  // 3. Compose and broadcast push
+  const sorted = Object.entries(scores).filter(([, v]) => v !== null).sort((a, b) => b[1] - a[1]);
+  const winner = sorted[0];
+  const loser = sorted[sorted.length - 1];
+
+  const titleText = '🏁 The Pit — week wrapped';
+  const bodyText = headline
+    ? `${headline} · Next draft is open`
+    : winner
+      ? `🏆 ${winner[0]} ${fmt(winner[1])}${loser && loser !== winner ? ` · 💀 ${loser[0]} ${fmt(loser[1])}` : ''} · Next draft is open`
+      : `Recap and next draft are ready in the app.`;
+
+  const subs = await sbGet(env, 'sdl_push_subscriptions?select=*');
+  let sent = 0, cleaned = 0;
+  const errors = [];
+  for (const sub of (subs || [])) {
+    const payload = JSON.stringify({
+      title: titleText,
+      body: bodyText,
+      tag: `pit-friday-${week.week_start}`,
+      url: '/',
+    });
+    try {
+      const r = await sendPush({ endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth }, payload, env);
+      if (r.ok) sent++;
+      else if (r.status === 404 || r.status === 410) {
+        await sbDelete(env, `sdl_push_subscriptions?id=eq.${sub.id}`).catch(() => {});
+        cleaned++;
+      } else {
+        errors.push(`${sub.player_name}: ${r.status}`);
+      }
+    } catch (e) {
+      errors.push(`${sub.player_name}: ${e.message || e}`);
+    }
+  }
+  return { sent, cleaned, errors };
+}
+
 // ─── SCHEDULED REMINDER ──────────────────────────────────────────────────────
 async function handleScheduled(env) {
   const now = new Date();
@@ -289,15 +491,23 @@ async function handleScheduled(env) {
   const etHour = parseInt(parts.find((p) => p.type === 'hour').value, 10);
   const etWeekday = parts.find((p) => p.type === 'weekday').value; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
   const reminderTime = etHour === 16 && (etWeekday === 'Sat' || etWeekday === 'Sun');
+  const fridayClose = etHour === 16 && etWeekday === 'Fri';
 
   // Heartbeat row so we can see the cron firing in Supabase even when no push is sent
   const heartbeat = {
     et_hour: etHour,
     et_weekday: etWeekday,
-    fired_action: reminderTime ? 'send' : 'skip',
+    fired_action: fridayClose ? 'friday-close' : reminderTime ? 'send' : 'skip',
     sent_count: 0,
     cleaned_count: 0,
   };
+
+  if (fridayClose) {
+    let summary = { sent: 0, cleaned: 0 };
+    try { summary = await handleFridayClose(env); } catch {}
+    await sbInsert(env, 'sdl_push_heartbeats', { ...heartbeat, sent_count: summary.sent || 0, cleaned_count: summary.cleaned || 0 }).catch(() => {});
+    return;
+  }
 
   if (!reminderTime) {
     await sbInsert(env, 'sdl_push_heartbeats', heartbeat).catch(() => {});
@@ -421,6 +631,20 @@ export default {
         });
       } catch (e) {
         return json({ error: `selftest failed: ${e.message || e}` }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/friday-close' && request.method === 'POST') {
+      // Admin-only: run the Friday close flow on demand (snapshot close prices,
+      // auto-generate recap + headline, broadcast push). Useful for testing.
+      if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
+        return json({ error: 'forbidden' }, 403);
+      }
+      try {
+        const summary = await handleFridayClose(env);
+        return json(summary);
+      } catch (e) {
+        return json({ error: e.message || String(e) }, 500);
       }
     }
 
