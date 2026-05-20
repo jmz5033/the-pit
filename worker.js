@@ -493,11 +493,13 @@ async function handleScheduled(env) {
   const reminderTime = etHour === 16 && (etWeekday === 'Sat' || etWeekday === 'Sun');
   const fridayClose = etHour === 16 && etWeekday === 'Fri';
 
-  // Heartbeat row so we can see the cron firing in Supabase even when no push is sent
+  // Heartbeat only at the 4 PM ET hour, regardless of day — gives one row
+  // per day so a missing entry is a real signal that the cron stopped
+  const shouldHeartbeat = etHour === 16;
   const heartbeat = {
     et_hour: etHour,
     et_weekday: etWeekday,
-    fired_action: fridayClose ? 'friday-close' : reminderTime ? 'send' : 'skip',
+    fired_action: fridayClose ? 'friday-close' : reminderTime ? 'send' : 'idle',
     sent_count: 0,
     cleaned_count: 0,
   };
@@ -510,7 +512,7 @@ async function handleScheduled(env) {
   }
 
   if (!reminderTime) {
-    await sbInsert(env, 'sdl_push_heartbeats', heartbeat).catch(() => {});
+    if (shouldHeartbeat) await sbInsert(env, 'sdl_push_heartbeats', heartbeat).catch(() => {});
     return;
   }
 
