@@ -2733,23 +2733,6 @@ function showWinnerCelebration() {
   document.addEventListener('touchend',   onTouchEnd,   { passive: true });
 })();
 
-// ─── REFRESH ON TAB FOCUS ─────────────────────────────────────────────────────
-// When the user comes back to the tab (visibility flips to visible or window
-// gains focus) we trigger a loadWeek — which re-fetches live Finnhub prices
-// and PATCHes prices_live, propagating to every other open tab via Realtime.
-// Throttled so rapid tab-switching doesn't hammer Finnhub.
-let _lastFocusRefresh = 0;
-function refreshOnFocus() {
-  if (!MY_NAME || !WK) return;
-  if (document.visibilityState && document.visibilityState !== 'visible') return;
-  const now = Date.now();
-  if (now - _lastFocusRefresh < 30000) return;
-  _lastFocusRefresh = now;
-  loadWeek();
-}
-document.addEventListener('visibilitychange', refreshOnFocus);
-window.addEventListener('focus', refreshOnFocus);
-
 // ─── REALTIME (Supabase) ──────────────────────────────────────────────────────
 // Keeps everyone's view in sync. When the active week's row is PATCHed we
 // merge the new fields into WK and re-render — except when the only change is
