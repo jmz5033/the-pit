@@ -546,14 +546,6 @@ canvas.pit-chart {
   transform-origin: bottom;
 }
 </style>
-<script type="module">
-  import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-  window.__SUPABASE_RT = createClient(
-    'https://bykjhwmmfsyqscefehvo.supabase.co',
-    'sb_publishable_ZlZeVJXBGquP8abYABcHxA_hTuNkjMm'
-  );
-  window.dispatchEvent(new Event('supabase-realtime-ready'));
-</script>
 </head>
 <body>
 <!-- PULL TO REFRESH INDICATOR -->
@@ -2733,41 +2725,6 @@ function showWinnerCelebration() {
   document.addEventListener('touchend',   onTouchEnd,   { passive: true });
 })();
 
-// ─── REALTIME (Supabase) ──────────────────────────────────────────────────────
-// Keeps everyone's view in sync. When the active week's row is PATCHed we
-// merge the new fields into WK and re-render — except when the only change is
-// the player's own draft_picks (echoes of their own auto-save), which would
-// otherwise wipe the focused input on every keystroke.
-let _rtChannel = null;
-const RT_SIGNIFICANT_FIELDS = ['rosters','prices_open','prices_live','prices_close','prices_daily','status','recap','recap_headline'];
-
-function setupRealtime() {
-  if (!window.__SUPABASE_RT) {
-    window.addEventListener('supabase-realtime-ready', setupRealtime, { once: true });
-    return;
-  }
-  if (_rtChannel) return;
-  _rtChannel = window.__SUPABASE_RT
-    .channel('sdl_weeks_changes')
-    .on('postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'sdl_weeks' },
-      (payload) => {
-        if (!payload || !payload.new || !WK || payload.new.id !== WK.id) return;
-        onRealtimeWeekUpdate(payload.new);
-      }
-    )
-    .subscribe();
-}
-
-function onRealtimeWeekUpdate(newRow) {
-  let changed = false;
-  for (const k of RT_SIGNIFICANT_FIELDS) {
-    if (JSON.stringify(WK[k]) !== JSON.stringify(newRow[k])) { changed = true; break; }
-  }
-  WK = { ...WK, ...newRow };
-  if (changed) renderWeek();
-}
-
 // ─── PUSH NOTIFICATIONS ───────────────────────────────────────────────────────
 function urlBase64ToUint8Array(b64) {
   const pad = '='.repeat((4 - (b64.length % 4)) % 4);
@@ -2890,7 +2847,6 @@ window.addEventListener('load', async () => {
     loadHistory();
   }
   updatePushUiState();
-  setupRealtime();
 });
 </script>
 </body>
