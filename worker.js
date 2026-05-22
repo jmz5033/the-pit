@@ -316,6 +316,16 @@ async function snapshotClosePrices(env, week) {
       if (d && typeof d.c === 'number' && d.c > 0) prices[t] = d.c;
     } catch {}
   }
+  // Fallback: for any ticker Finnhub didn't return a fresh close for, use the
+  // last-known live price so the position still contributes to P&L instead of
+  // silently zeroing out (which can flip standings — e.g. Seab's RXT -$7,875
+  // turning into $0 because Finnhub's quote endpoint missed it at 16:00 ET).
+  const liveBackup = week.prices_live || {};
+  for (const t of tickers) {
+    if (!(t in prices) && typeof liveBackup[t] === 'number' && liveBackup[t] > 0) {
+      prices[t] = liveBackup[t];
+    }
+  }
   return prices;
 }
 
