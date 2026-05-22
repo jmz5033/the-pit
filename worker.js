@@ -636,6 +636,26 @@ export default {
       }
     }
 
+    if (url.pathname === '/api/fh-check' && request.method === 'GET') {
+      // Admin-only: confirm FH_KEY env var actually authenticates with
+      // Finnhub. Returns the AAPL quote payload (or upstream status) so we
+      // can verify the worker can fetch quotes before relying on it at
+      // Friday 4 PM ET.
+      if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
+        return json({ error: 'forbidden' }, 403);
+      }
+      if (!env.FH_KEY) return json({ error: 'FH_KEY not set' }, 500);
+      try {
+        const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=AAPL&token=${env.FH_KEY}`);
+        const body = await r.text();
+        let parsed = null;
+        try { parsed = JSON.parse(body); } catch {}
+        return json({ status: r.status, ok: r.ok, body: parsed || body.slice(0, 200), fhKeyLen: env.FH_KEY.length });
+      } catch (e) {
+        return json({ error: e.message || String(e) }, 500);
+      }
+    }
+
     if (url.pathname === '/api/friday-close' && request.method === 'POST') {
       // Admin-only: run the Friday close flow on demand (snapshot close prices,
       // auto-generate recap + headline, broadcast push). Useful for testing.
