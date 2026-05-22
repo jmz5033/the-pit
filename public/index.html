@@ -2745,8 +2745,23 @@ async function getCurrentSubscription() {
 async function updatePushUiState() {
   const btn = document.getElementById('push-btn');
   if (!btn) return;
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) { btn.hidden = true; return; }
   if (!MY_NAME) { btn.hidden = true; return; }
+  // iOS Safari only exposes PushManager once the site is installed as a PWA
+  // (Add to Home Screen + opened from the home-screen icon). Show a hint
+  // button instead of hiding silently so users know what's needed.
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  const isStandalone = (typeof navigator.standalone === 'boolean' && navigator.standalone) ||
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    if (isIOS && !isStandalone) {
+      btn.hidden = false;
+      btn.disabled = true;
+      btn.textContent = '📲 Add to Home Screen to enable';
+      return;
+    }
+    btn.hidden = true;
+    return;
+  }
   if (Notification.permission === 'denied') {
     btn.hidden = false;
     btn.textContent = '🔕 Notifications blocked';
