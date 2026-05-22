@@ -2776,29 +2776,10 @@ function setupRealtime() {
     .subscribe();
 }
 
-// Deep-equal that ignores object key order — Postgres JSONB echoes prices_*
-// back with arbitrary key order, so JSON.stringify comparison creates a fetch
-// loop with renderWeek (which itself PATCHes prices_live).
-function deepEqual(a, b) {
-  if (a === b) return true;
-  if (a == null || b == null) return a === b;
-  if (typeof a !== 'object' || typeof b !== 'object') return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  if (Array.isArray(a)) {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (!deepEqual(a[i], b[i])) return false;
-    return true;
-  }
-  const ak = Object.keys(a), bk = Object.keys(b);
-  if (ak.length !== bk.length) return false;
-  for (const k of ak) if (!deepEqual(a[k], b[k])) return false;
-  return true;
-}
-
 function onRealtimeWeekUpdate(newRow) {
   let changed = false;
   for (const k of RT_SIGNIFICANT_FIELDS) {
-    if (!deepEqual(WK[k], newRow[k])) { changed = true; break; }
+    if (JSON.stringify(WK[k]) !== JSON.stringify(newRow[k])) { changed = true; break; }
   }
   WK = { ...WK, ...newRow };
   if (changed) renderWeek();
