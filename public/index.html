@@ -546,6 +546,14 @@ canvas.pit-chart {
   transform-origin: bottom;
 }
 </style>
+<script type="module">
+  import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+  window.__SUPABASE_RT = createClient(
+    'https://bykjhwmmfsyqscefehvo.supabase.co',
+    'sb_publishable_ZlZeVJXBGquP8abYABcHxA_hTuNkjMm'
+  );
+  window.dispatchEvent(new Event('supabase-realtime-ready'));
+</script>
 </head>
 <body>
 <!-- PULL TO REFRESH INDICATOR -->
@@ -1206,11 +1214,28 @@ async function loadWeek() {
       WK = (await sb(`sdl_weeks?week_start=eq.${WK.week_start}&select=*`))[0];
     }
 
+    await refreshLivePrices();
     await renderWeek();
   } catch(e) {
     showErr('app-err', e.message);
     hide('wk-loading');
   }
+}
+
+// Side-effect helper used by loadWeek + submitDraft. Fetches fresh Finnhub
+// quotes, PATCHes WK.prices_live, snapshots today's prices into prices_daily.
+// Kept separate from renderWeek so renders triggered by Realtime echoes or
+// other tabs don't re-trigger Finnhub.
+async function refreshLivePrices() {
+  if (!WK || WK.status !== 'live') return;
+  const tickers = getAllTickers();
+  if (!tickers.length) return;
+  const fresh = await fetchLive(tickers);
+  if (!Object.keys(fresh).length) return;
+  const livePrices = { ...(WK.prices_live || {}), ...fresh };
+  await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', { prices_live: livePrices });
+  WK.prices_live = livePrices;
+  await snapshotDailyPrices(livePrices);
 }
 
 async function renderWeek() {
@@ -1228,34 +1253,21 @@ async function renderWeek() {
   const wkMon = new Date(WK.week_start + 'T12:00:00Z');
   const wkFri = new Date(wkMon); wkFri.setUTCDate(wkMon.getUTCDate() + 4);
 
-  // Fetch live prices if we have any submitted rosters
+  // renderWeek is intentionally pure: read prices from WK only, never fetch or
+  // PATCH. The data-side-effects (Finnhub fetch + prices_live PATCH +
+  // snapshotDailyPrices) live in refreshLivePrices(), called by loadWeek and
+  // submitDraft. Keeping render pure means Realtime echoes and re-renders
+  // can't trigger a fetch loop.
   let livePrices = {};
-  const allTickers = getAllTickers();
-  if (allTickers.length) {
-    if (WK.status === 'closed') {
-      livePrices = WK.prices_close || {};
-    } else if (WK.status === 'live') {
-      const fresh = await fetchLive(allTickers);
-      if (Object.keys(fresh).length) {
-        // Merge with last-known-good so any tickers Finnhub didn't return
-        // this poll keep their previous price instead of zeroing the P&L.
-        livePrices = { ...(WK.prices_live || {}), ...fresh };
-        await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', { prices_live: livePrices });
-        WK.prices_live = livePrices;
-      } else {
-        livePrices = WK.prices_live || {};
-      }
-    }
+  if (WK.status === 'closed') {
+    livePrices = WK.prices_close || {};
+  } else if (WK.status === 'live') {
+    livePrices = WK.prices_live || {};
   }
 
   // Set player order for consistent colors (MY_NAME first, rest alphabetical)
   const allRosterPlayers = Object.keys(WK.rosters || {});
   playerOrder = [MY_NAME, ...allRosterPlayers.filter(p => p !== MY_NAME).sort()];
-
-  // Snapshot today's prices into daily history for chart
-  if (Object.keys(livePrices).length) {
-    await snapshotDailyPrices(livePrices);
-  }
 
   const statusPill = WK.status === 'draft'
     ? '<span class="pill pill-draft">Draft open</span>'
@@ -2097,6 +2109,7 @@ async function submitDraft() {
     _draftSaveStatus = '';
     showPickConfirmation();
     showToast('Picks locked in! Good luck this week.', 'success', 4000);
+    await refreshLivePrices();
     await renderWeek();
   } catch(e) { showErr('app-err', 'Submit failed: ' + e.message); showToast('Failed to submit picks', 'error'); }
 }
@@ -2725,6 +2738,73 @@ function showWinnerCelebration() {
   document.addEventListener('touchend',   onTouchEnd,   { passive: true });
 })();
 
+// ─── REFRESH ON TAB FOCUS ─────────────────────────────────────────────────────
+// When the user comes back to the tab, fetch fresh Finnhub prices and re-render.
+// Throttled to once per 30s per tab so rapid focus changes don't spam Finnhub.
+// loadWeek is the right entry point — it both refreshes prices and re-renders.
+let _lastFocusRefresh = 0;
+function refreshOnFocus() {
+  if (!MY_NAME || !WK) return;
+  if (document.visibilityState && document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  if (now - _lastFocusRefresh < 30000) return;
+  _lastFocusRefresh = now;
+  loadWeek();
+}
+document.addEventListener('visibilitychange', refreshOnFocus);
+window.addEventListener('focus', refreshOnFocus);
+
+// ─── REALTIME (Supabase) ──────────────────────────────────────────────────────
+// renderWeek is now pure, so calling it from a Realtime callback is safe — it
+// won't re-fetch Finnhub or PATCH anything. Self-echoes of our own writes will
+// still arrive, but the deep-equal check below filters out no-op changes
+// (Postgres JSONB doesn't preserve key order, so JSON.stringify isn't reliable).
+let _rtChannel = null;
+const RT_SIGNIFICANT_FIELDS = ['rosters','prices_open','prices_live','prices_close','prices_daily','status','recap','recap_headline'];
+
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (a == null || b == null) return a === b;
+  if (typeof a !== 'object' || typeof b !== 'object') return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!deepEqual(a[i], b[i])) return false;
+    return true;
+  }
+  const ak = Object.keys(a), bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) if (!deepEqual(a[k], b[k])) return false;
+  return true;
+}
+
+function setupRealtime() {
+  if (!window.__SUPABASE_RT) {
+    window.addEventListener('supabase-realtime-ready', setupRealtime, { once: true });
+    return;
+  }
+  if (_rtChannel) return;
+  _rtChannel = window.__SUPABASE_RT
+    .channel('sdl_weeks_changes')
+    .on('postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'sdl_weeks' },
+      (payload) => {
+        if (!payload || !payload.new || !WK || payload.new.id !== WK.id) return;
+        onRealtimeWeekUpdate(payload.new);
+      }
+    )
+    .subscribe();
+}
+
+function onRealtimeWeekUpdate(newRow) {
+  let changed = false;
+  for (const k of RT_SIGNIFICANT_FIELDS) {
+    if (!deepEqual(WK[k], newRow[k])) { changed = true; break; }
+  }
+  WK = { ...WK, ...newRow };
+  if (changed) renderWeek();
+}
+
 // ─── PUSH NOTIFICATIONS ───────────────────────────────────────────────────────
 function urlBase64ToUint8Array(b64) {
   const pad = '='.repeat((4 - (b64.length % 4)) % 4);
@@ -2847,6 +2927,7 @@ window.addEventListener('load', async () => {
     loadHistory();
   }
   updatePushUiState();
+  setupRealtime();
 });
 </script>
 </body>
