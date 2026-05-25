@@ -1057,12 +1057,34 @@ function getLockTime(weekStart) {
   return sun;
 }
 
+// US market holidays (NYSE/Nasdaq full-day closures). Extend per year as needed.
+const MARKET_HOLIDAYS = new Set([
+  '2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25',
+  '2026-06-19','2026-07-03','2026-09-07','2026-11-26','2026-12-25',
+  '2027-01-01','2027-01-18','2027-02-15','2027-03-26','2027-05-31',
+  '2027-06-18','2027-07-05','2027-09-06','2027-11-25','2027-12-24',
+]);
+
+function firstTradingDay(weekStart) {
+  // weekStart is the Monday; advance past weekends + market holidays so a
+  // holiday-Monday week (e.g. Memorial Day) bases its open on the real first
+  // trading day instead of snapshotting stale prices on the closed day.
+  const d = new Date(weekStart + 'T00:00:00Z');
+  for (let i = 0; i < 5; i++) {
+    const ds = d.toISOString().slice(0, 10);
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !MARKET_HOLIDAYS.has(ds)) return d;
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return d;
+}
+
 function getOpenSnapshotTime(weekStart) {
-  // Monday 9:30AM ET
-  const mon = new Date(weekStart + 'T00:00:00Z');
+  // First trading day of the week at 9:30AM ET (skips holiday Mondays)
+  const day = firstTradingDay(weekStart);
   const offset = etOffsetHours();
-  mon.setUTCHours(9 - offset, 30, 0, 0);
-  return mon;
+  day.setUTCHours(9 - offset, 30, 0, 0);
+  return day;
 }
 
 function getCloseSnapshotTime(weekStart) {
