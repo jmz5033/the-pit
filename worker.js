@@ -1,3 +1,32 @@
+// ─── MARKET HOLIDAYS ─────────────────────────────────────────────────────────
+// US market (NYSE/Nasdaq) full-day closures. Keep in sync with the same set in
+// public/index.html. Used to defer the weekly close to the last actual trading
+// day so a holiday Friday (Juneteenth, Christmas, Good Friday, July 3) doesn't
+// snapshot stale prices.
+const MARKET_HOLIDAYS = new Set([
+  '2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25',
+  '2026-06-19','2026-07-03','2026-09-07','2026-11-26','2026-12-25',
+  '2027-01-01','2027-01-18','2027-02-15','2027-03-26','2027-05-31',
+  '2027-06-18','2027-07-05','2027-09-06','2027-11-25','2027-12-24',
+]);
+
+// Given the ET date of any weekday, return the YYYY-MM-DD of the last trading
+// day (Mon–Fri, skipping holidays) of that Mon–Fri week.
+function lastTradingDayOfWeek(etDateStr) {
+  const d = new Date(etDateStr + 'T12:00:00Z');
+  const dow = d.getUTCDay(); // 0=Sun..6=Sat
+  const offsetToFriday = 5 - (dow === 0 ? 7 : dow);
+  const probe = new Date(d);
+  probe.setUTCDate(d.getUTCDate() + offsetToFriday); // this week's Friday
+  for (let i = 0; i < 5; i++) {
+    const ds = probe.toISOString().slice(0, 10);
+    const pdow = probe.getUTCDay();
+    if (pdow !== 0 && pdow !== 6 && !MARKET_HOLIDAYS.has(ds)) return ds;
+    probe.setUTCDate(probe.getUTCDate() - 1);
+  }
+  return probe.toISOString().slice(0, 10);
+}
+
 // ─── ANTHROPIC RECAP ────────────────────────────────────────────────────────
 const ALLOWED_MODEL = 'claude-sonnet-4-20250514';
 const MAX_TOKENS = 300;
@@ -492,16 +521,19 @@ async function handleFridayClose(env) {
 // ─── SCHEDULED REMINDER ──────────────────────────────────────────────────────
 async function handleScheduled(env) {
   const now = new Date();
-  const parts = new Intl.DateTimeFormat('en-US', {
+  const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
-    hour: 'numeric',
-    weekday: 'short',
-    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    weekday: 'short', hour: 'numeric', hour12: false,
   }).formatToParts(now);
   const etHour = parseInt(parts.find((p) => p.type === 'hour').value, 10);
-  const etWeekday = parts.find((p) => p.type === 'weekday').value; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
+  const etWeekday = parts.find((p) => p.type === 'weekday').value; // Mon..Sun
+  const etDate = `${parts.find(p=>p.type==='year').value}-${parts.find(p=>p.type==='month').value}-${parts.find(p=>p.type==='day').value}`;
   const reminderTime = etHour === 16 && (etWeekday === 'Sat' || etWeekday === 'Sun');
-  const fridayClose = etHour === 16 && etWeekday === 'Fri';
+  // Close fires at 4 PM ET on the week's LAST trading day — usually Friday, but
+  // Thursday on weeks with a holiday Friday (Juneteenth, Christmas, etc.).
+  const isTradingDay = etWeekday !== 'Sat' && etWeekday !== 'Sun' && !MARKET_HOLIDAYS.has(etDate);
+  const closeTime = etHour === 16 && isTradingDay && etDate === lastTradingDayOfWeek(etDate);
 
   // Heartbeat only at the 4 PM ET hour, regardless of day — gives one row
   // per day so a missing entry is a real signal that the cron stopped
@@ -509,12 +541,12 @@ async function handleScheduled(env) {
   const heartbeat = {
     et_hour: etHour,
     et_weekday: etWeekday,
-    fired_action: fridayClose ? 'friday-close' : reminderTime ? 'send' : 'idle',
+    fired_action: closeTime ? 'week-close' : reminderTime ? 'send' : 'idle',
     sent_count: 0,
     cleaned_count: 0,
   };
 
-  if (fridayClose) {
+  if (closeTime) {
     let summary = { sent: 0, cleaned: 0 };
     try { summary = await handleFridayClose(env); } catch {}
     await sbInsert(env, 'sdl_push_heartbeats', { ...heartbeat, sent_count: summary.sent || 0, cleaned_count: summary.cleaned || 0 }).catch(() => {});

@@ -37,11 +37,28 @@ Practical implications when writing worker code:
 
 - **Sat 4 PM ET** and **Sun 4 PM ET**: reminder push to players who haven't
   submitted yet for the upcoming draft week.
-- **Fri 4 PM ET**: close-of-week broadcast — worker snapshots `prices_close`
-  from Finnhub, calls Anthropic for a recap + one-line headline (both cached
-  on `sdl_weeks`), then broadcasts a push with the headline.
+- **Last trading day 4 PM ET** (usually Fri, Thu on holiday-Friday weeks):
+  close-of-week broadcast — worker snapshots `prices_close` from Finnhub,
+  calls Anthropic for a recap + one-line headline (both cached on `sdl_weeks`),
+  then broadcasts a push with the headline.
 - Heartbeat row written to `sdl_push_heartbeats` once per day at 16 ET only
   (not every hour) — one missing row = cron is broken.
+
+## Market-holiday handling
+
+`MARKET_HOLIDAYS` is duplicated in both `worker.js` and `public/index.html`
+(keep them in sync; extend per year). Effects:
+
+- **Open snapshot** (`public/index.html` `getOpenSnapshotTime` →
+  `firstTradingDay`): bases each week's cost basis on the first actual trading
+  day at 9:30 ET, so a holiday Monday (e.g. Memorial Day) snapshots Tuesday.
+- **Close** (`worker.js` `handleScheduled` → `lastTradingDayOfWeek`): fires the
+  close-of-week flow at 4 PM ET on the week's last trading day, so a holiday
+  Friday (Juneteenth, Christmas, Good Friday, July 3) closes Thursday instead
+  of snapshotting stale prices on a closed Friday.
+- Defensive fallback: `snapshotClosePrices` fills any ticker Finnhub doesn't
+  return with the last-known `prices_live` value (avoids a missing close quote
+  silently zeroing a position's P&L and flipping standings).
 
 ## Git workflow
 
