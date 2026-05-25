@@ -1270,7 +1270,7 @@ async function renderWeek() {
   playerOrder = [MY_NAME, ...allRosterPlayers.filter(p => p !== MY_NAME).sort()];
 
   const statusPill = WK.status === 'draft'
-    ? '<span class="pill pill-draft">Draft open</span>'
+    ? (locked ? '<span class="pill pill-closed">Locked</span>' : '<span class="pill pill-draft">Draft open</span>')
     : WK.status === 'live'
     ? '<span class="pill pill-live">Live</span>'
     : '<span class="pill pill-closed">Final</span>';
