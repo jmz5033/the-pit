@@ -786,9 +786,11 @@ async function snapshotDailyPrices(livePrices) {
   if (!Object.keys(livePrices).length) return;
   const today = todayET();
   const daily = {...(WK.prices_daily || {})};
-  // Only snapshot if we have market hours data (Mon-Fri)
+  // Only snapshot on actual trading days — skip weekends and market holidays
+  // (a mid-week holiday like Thanksgiving would otherwise log a stale flat day)
   const dayOfWeek = new Date().getUTCDay();
   if (dayOfWeek === 0 || dayOfWeek === 6) return;
+  if (MARKET_HOLIDAYS.has(today)) return;
   daily[today] = livePrices;
   await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', {prices_daily: daily});
   WK.prices_daily = daily;
