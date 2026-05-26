@@ -10,6 +10,27 @@ const MARKET_HOLIDAYS = new Set([
   '2027-06-18','2027-07-05','2027-09-06','2027-11-25','2027-12-24',
 ]);
 
+// Monday (YYYY-MM-DD) of the Mon–Fri week containing the given ET date.
+function mondayOfWeek(etDateStr) {
+  const d = new Date(etDateStr + 'T12:00:00Z');
+  const dow = d.getUTCDay(); // 0=Sun..6=Sat
+  d.setUTCDate(d.getUTCDate() - (dow === 0 ? 6 : dow - 1));
+  return d.toISOString().slice(0, 10);
+}
+
+// First trading day (YYYY-MM-DD) of the week containing the given ET date —
+// usually Monday, Tuesday on holiday-Monday weeks.
+function firstTradingDayOfWeek(etDateStr) {
+  const probe = new Date(mondayOfWeek(etDateStr) + 'T12:00:00Z');
+  for (let i = 0; i < 5; i++) {
+    const ds = probe.toISOString().slice(0, 10);
+    const pdow = probe.getUTCDay();
+    if (pdow !== 0 && pdow !== 6 && !MARKET_HOLIDAYS.has(ds)) return ds;
+    probe.setUTCDate(probe.getUTCDate() + 1);
+  }
+  return mondayOfWeek(etDateStr);
+}
+
 // Given the ET date of any weekday, return the YYYY-MM-DD of the last trading
 // day (Mon–Fri, skipping holidays) of that Mon–Fri week.
 function lastTradingDayOfWeek(etDateStr) {
@@ -518,26 +539,67 @@ async function handleFridayClose(env) {
   return { sent, cleaned, errors };
 }
 
+// ─── WEEK KICKOFF (market open) ───────────────────────────────────────────────
+async function handleWeekKickoff(env, etDate) {
+  // The active week is the one whose week_start is this week's Monday.
+  const monday = mondayOfWeek(etDate);
+  const weeks = await sbGet(env, `sdl_weeks?week_start=eq.${monday}&select=*`);
+  if (!weeks || !weeks.length) return { sent: 0, cleaned: 0, note: 'no week' };
+  const week = weeks[0];
+  const rosters = week.rosters || {};
+  const players = Object.keys(rosters).filter((p) => (rosters[p] || []).length >= MAX_PICKS);
+  if (!players.length) return { sent: 0, cleaned: 0, note: 'no rosters' };
+
+  const title = '🔔 Opening bell!';
+  const body = players.length === 1
+    ? `Markets are open — your picks are live. Good luck this week. 📈`
+    : `Markets are open — ${players.length} portfolios are live. May the best picks win. 📈`;
+
+  const subs = await sbGet(env, 'sdl_push_subscriptions?select=*');
+  let sent = 0, cleaned = 0;
+  for (const sub of (subs || [])) {
+    const payload = JSON.stringify({ title, body, tag: `pit-kickoff-${monday}`, url: '/' });
+    try {
+      const r = await sendPush({ endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth }, payload, env);
+      if (r.ok) sent++;
+      else if (r.status === 404 || r.status === 410) {
+        await sbDelete(env, `sdl_push_subscriptions?id=eq.${sub.id}`).catch(() => {});
+        cleaned++;
+      }
+    } catch {}
+  }
+  return { sent, cleaned };
+}
+
 // ─── SCHEDULED REMINDER ──────────────────────────────────────────────────────
 async function handleScheduled(env) {
   const now = new Date();
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
     year: 'numeric', month: '2-digit', day: '2-digit',
-    weekday: 'short', hour: 'numeric', hour12: false,
+    weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: false,
   }).formatToParts(now);
   const etHour = parseInt(parts.find((p) => p.type === 'hour').value, 10);
+  const etMinute = parseInt(parts.find((p) => p.type === 'minute').value, 10);
   const etWeekday = parts.find((p) => p.type === 'weekday').value; // Mon..Sun
   const etDate = `${parts.find(p=>p.type==='year').value}-${parts.find(p=>p.type==='month').value}-${parts.find(p=>p.type==='day').value}`;
-  const reminderTime = etHour === 16 && (etWeekday === 'Sat' || etWeekday === 'Sun');
-  // Close fires at 4 PM ET on the week's LAST trading day — usually Friday, but
-  // Thursday on weeks with a holiday Friday (Juneteenth, Christmas, etc.).
   const isTradingDay = etWeekday !== 'Sat' && etWeekday !== 'Sun' && !MARKET_HOLIDAYS.has(etDate);
-  const closeTime = etHour === 16 && isTradingDay && etDate === lastTradingDayOfWeek(etDate);
 
-  // Heartbeat only at the 4 PM ET hour, regardless of day — gives one row
-  // per day so a missing entry is a real signal that the cron stopped
-  const shouldHeartbeat = etHour === 16;
+  // Kickoff: 9:30 AM ET on the week's first trading day (Mon, or Tue on a
+  // holiday-Monday week). The :30 cron schedule makes this tick possible.
+  const kickoffTime = etHour === 9 && etMinute === 30 && isTradingDay && etDate === firstTradingDayOfWeek(etDate);
+  // Reminders: 4 PM ET Sat/Sun. Close: 4 PM ET on the week's last trading day.
+  const reminderTime = etHour === 16 && etMinute === 0 && (etWeekday === 'Sat' || etWeekday === 'Sun');
+  const closeTime = etHour === 16 && etMinute === 0 && isTradingDay && etDate === lastTradingDayOfWeek(etDate);
+
+  if (kickoffTime) {
+    try { await handleWeekKickoff(env, etDate); } catch {}
+    return;
+  }
+
+  // Heartbeat only at 4:00 PM ET — one row per day so a missing entry is a
+  // real signal that the cron stopped.
+  const shouldHeartbeat = etHour === 16 && etMinute === 0;
   const heartbeat = {
     et_hour: etHour,
     et_weekday: etWeekday,
@@ -706,6 +768,20 @@ export default {
       }
       try {
         const summary = await handleFridayClose(env);
+        return json(summary);
+      } catch (e) {
+        return json({ error: e.message || String(e) }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/kickoff' && request.method === 'POST') {
+      // Admin-only: fire the week-open kickoff push on demand for testing.
+      if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
+        return json({ error: 'forbidden' }, 403);
+      }
+      const etDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+      try {
+        const summary = await handleWeekKickoff(env, etDate);
         return json(summary);
       } catch (e) {
         return json({ error: e.message || String(e) }, 500);

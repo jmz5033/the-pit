@@ -20,8 +20,11 @@ Practical implications when writing worker code:
 - Static client: `public/index.html` (single file) + `public/sw.js`
   (service worker for web push).
 - Database: Supabase project `bykjhwmmfsyqscefehvo` ("The Pit").
-- Cron: hourly via `[triggers] crons = ["0 * * * *"]` in `wrangler.toml`.
-  Handler is gated by ET-local time inside the worker.
+- Cron: `[triggers] crons = ["0 * * * *", "30 * * * *"]` in `wrangler.toml`
+  (fires :00 and :30 every hour). Handler gates by ET-local hour AND minute
+  inside the worker — the :30 tick exists to hit the 9:30 AM ET market open.
+  All 4 PM ET logic is guarded with `etMinute === 0` so it doesn't double-fire
+  at 16:30.
 
 ## Worker secrets currently expected
 
@@ -35,6 +38,8 @@ Practical implications when writing worker code:
 
 ## Push schedule
 
+- **First trading day 9:30 AM ET** (Mon, or Tue on a holiday-Monday week):
+  "Opening bell" kickoff broadcast to all subscribers (`handleWeekKickoff`).
 - **Sat 4 PM ET** and **Sun 4 PM ET**: reminder push to players who haven't
   submitted yet for the upcoming draft week.
 - **Last trading day 4 PM ET** (usually Fri, Thu on holiday-Friday weeks):
