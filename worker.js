@@ -555,10 +555,29 @@ async function handleWeekKickoff(env, etDate) {
     ? `Markets are open — your picks are live. Good luck this week. 📈`
     : `Markets are open — ${players.length} portfolios are live. May the best picks win. 📈`;
 
+  return broadcastPush(env, { title, body, tag: `pit-kickoff-${monday}` });
+}
+
+async function handleWeekFinalDayKickoff(env, etDate) {
+  // Active week (its Monday is this week's Monday). Skip if the week has no
+  // submitted rosters.
+  const monday = mondayOfWeek(etDate);
+  const weeks = await sbGet(env, `sdl_weeks?week_start=eq.${monday}&select=*`);
+  if (!weeks || !weeks.length) return { sent: 0, cleaned: 0, note: 'no week' };
+  const week = weeks[0];
+  const players = Object.keys(week.rosters || {}).filter((p) => (week.rosters[p] || []).length >= MAX_PICKS);
+  if (!players.length) return { sent: 0, cleaned: 0, note: 'no rosters' };
+
+  const title = '🔔 Final bell day!';
+  const body = 'Last day of the market week. Who will shine, who will stumble?';
+  return broadcastPush(env, { title, body, tag: `pit-finalday-${monday}` });
+}
+
+async function broadcastPush(env, { title, body, tag }) {
   const subs = await sbGet(env, 'sdl_push_subscriptions?select=*');
   let sent = 0, cleaned = 0;
   for (const sub of (subs || [])) {
-    const payload = JSON.stringify({ title, body, tag: `pit-kickoff-${monday}`, url: '/' });
+    const payload = JSON.stringify({ title, body, tag, url: '/' });
     try {
       const r = await sendPush({ endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth }, payload, env);
       if (r.ok) sent++;
@@ -584,16 +603,27 @@ async function handleScheduled(env) {
   const etWeekday = parts.find((p) => p.type === 'weekday').value; // Mon..Sun
   const etDate = `${parts.find(p=>p.type==='year').value}-${parts.find(p=>p.type==='month').value}-${parts.find(p=>p.type==='day').value}`;
   const isTradingDay = etWeekday !== 'Sat' && etWeekday !== 'Sun' && !MARKET_HOLIDAYS.has(etDate);
+  const firstDay = isTradingDay ? firstTradingDayOfWeek(etDate) : null;
+  const lastDay  = isTradingDay ? lastTradingDayOfWeek(etDate)  : null;
 
   // Kickoff: 9:30 AM ET on the week's first trading day (Mon, or Tue on a
   // holiday-Monday week). The :30 cron schedule makes this tick possible.
-  const kickoffTime = etHour === 9 && etMinute === 30 && isTradingDay && etDate === firstTradingDayOfWeek(etDate);
+  const kickoffTime = etHour === 9 && etMinute === 30 && isTradingDay && etDate === firstDay;
+  // Final-day kickoff: 9:30 AM ET on the week's last trading day (Fri, or Thu
+  // on a holiday-Friday week). Skipped on weeks where first === last so we
+  // don't double-fire on the same morning.
+  const finalDayKickoffTime = etHour === 9 && etMinute === 30 && isTradingDay && etDate === lastDay && firstDay !== lastDay;
   // Reminders: 4 PM ET Sat/Sun. Close: 4 PM ET on the week's last trading day.
   const reminderTime = etHour === 16 && etMinute === 0 && (etWeekday === 'Sat' || etWeekday === 'Sun');
-  const closeTime = etHour === 16 && etMinute === 0 && isTradingDay && etDate === lastTradingDayOfWeek(etDate);
+  const closeTime = etHour === 16 && etMinute === 0 && isTradingDay && etDate === lastDay;
 
   if (kickoffTime) {
     try { await handleWeekKickoff(env, etDate); } catch {}
+    return;
+  }
+
+  if (finalDayKickoffTime) {
+    try { await handleWeekFinalDayKickoff(env, etDate); } catch {}
     return;
   }
 
@@ -782,6 +812,20 @@ export default {
       const etDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
       try {
         const summary = await handleWeekKickoff(env, etDate);
+        return json(summary);
+      } catch (e) {
+        return json({ error: e.message || String(e) }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/final-day-kickoff' && request.method === 'POST') {
+      // Admin-only: fire the final-trading-day morning push on demand.
+      if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
+        return json({ error: 'forbidden' }, 403);
+      }
+      const etDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+      try {
+        const summary = await handleWeekFinalDayKickoff(env, etDate);
         return json(summary);
       } catch (e) {
         return json({ error: e.message || String(e) }, 500);

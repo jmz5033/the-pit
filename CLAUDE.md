@@ -40,6 +40,9 @@ Practical implications when writing worker code:
 
 - **First trading day 9:30 AM ET** (Mon, or Tue on a holiday-Monday week):
   "Opening bell" kickoff broadcast to all subscribers (`handleWeekKickoff`).
+- **Last trading day 9:30 AM ET** (Fri, or Thu on a holiday-Friday week):
+  "Final bell day" broadcast (`handleWeekFinalDayKickoff`). Skipped on weeks
+  where first === last so it doesn't double-fire alongside the opening kickoff.
 - **Sat 4 PM ET** and **Sun 4 PM ET**: reminder push to players who haven't
   submitted yet for the upcoming draft week.
 - **Last trading day 4 PM ET** (usually Fri, Thu on holiday-Friday weeks):
