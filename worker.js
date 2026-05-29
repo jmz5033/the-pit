@@ -379,6 +379,40 @@ async function snapshotClosePrices(env, week) {
   return prices;
 }
 
+// Persona + angle rotation for the weekly recap. Hashed deterministically off
+// week_start so regenerating the same week always lands on the same style, but
+// week-to-week the voice and framing rotate so the recap never reads the same.
+// Persona affects both the headline and the recap body (consistent voice);
+// angle reframes just the recap body.
+const RECAP_PERSONAS = [
+  'an energetic sports-radio host who loves catchphrases and runs hot',
+  'a Bloomberg-terminal finance bro who casually drops jargon and sector calls',
+  'an adrenaline-fueled race-car pit commentator giving lap-by-lap urgency',
+  'a locker-room smack-talker giving friend-to-friend roast energy',
+  'a doom-and-gloom market bear who treats every win as a temporary blip',
+  'a hype-machine VC pitch deck where every trend is the next paradigm shift',
+  'a deadpan dry-humor narrator in the style of a Wes Anderson voiceover',
+  'an old-timey 1920s newsreel announcer with formal antique phrasing',
+];
+
+const RECAP_ANGLES = [
+  "lead with the winner's single biggest stock gain and build the recap around it",
+  "lead with the loser's single worst stock blowup and build the recap around it",
+  "frame as a comeback story for whoever was behind mid-week and ended up high",
+  "frame as a collapse for whoever led mid-week and faded by Friday",
+  "focus on a sector that ruled or wrecked the week and which players rode it",
+  "compare the field to a vivid metaphor (race, fight, weather pattern, heist)",
+];
+
+function pickStyleForWeek(weekStart) {
+  let hash = 0;
+  for (let i = 0; i < weekStart.length; i++) hash = (hash * 31 + weekStart.charCodeAt(i)) >>> 0;
+  return {
+    persona: RECAP_PERSONAS[hash % RECAP_PERSONAS.length],
+    angle: RECAP_ANGLES[Math.floor(hash / RECAP_PERSONAS.length) % RECAP_ANGLES.length],
+  };
+}
+
 async function generateRecapAndHeadline(env, week, scores) {
   const sorted = Object.entries(scores).filter(([, v]) => v !== null).sort((a, b) => b[1] - a[1]);
   if (!sorted.length) throw new Error('no scored players');
@@ -428,12 +462,13 @@ ${dailyArc.map((dayArr, i) => `${dates[i]}: ${dayArr.map(d => `${d.player} ${fmt
 
 Write the recap now.`;
 
-  const systemPrompt = `You are a sports commentator writing a weekly recap for a stock-picking game called "The Pit". Players compete each week picking 10 stocks with a $100k virtual budget.
+  const { persona, angle } = pickStyleForWeek(week.week_start);
+  const systemPrompt = `You are ${persona}, writing a weekly recap for a stock-picking game called "The Pit". Players compete each week picking 10 stocks with a $100k virtual budget. Stay fully in this voice for both lines below — vocabulary, rhythm, and attitude.
 
 Output EXACTLY this format, no extra text:
 
-HEADLINE: <one punchy line, max 90 characters, calling out the winner and good-naturedly roasting last place>
-RECAP: <3-4 sentence vivid recap using stock names and numbers, capturing drama and momentum swings. Casual language, no bullet points, no HTML, no markdown.>`;
+HEADLINE: <one punchy line, max 90 characters, calling out the winner and good-naturedly roasting last place, in your voice>
+RECAP: <3-4 sentence vivid recap using stock names and numbers, in your voice. Framing: ${angle}. No bullet points, no HTML, no markdown.>`;
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
