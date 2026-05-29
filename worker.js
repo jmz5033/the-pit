@@ -575,6 +575,37 @@ async function handleFridayClose(env) {
 }
 
 // ─── WEEK KICKOFF (market open) ───────────────────────────────────────────────
+async function generateShortPushBody(env, { persona, context, max }) {
+  // Single Anthropic call to produce a 1-2 sentence push body in the given
+  // persona. Returns null on any failure so callers can fall back to a static
+  // line instead of dropping the push.
+  if (!env.ANTHROPIC_API_KEY) return null;
+  const system = `You are ${persona}, writing a single short push notification body for a stock-picking game called "The Pit" (players pick 10 stocks with a $100k virtual budget).
+
+Output ONLY the body text — 1 to 2 sentences, max ${max} characters, fully in your voice. No quotes around it, no labels, no "BODY:" prefix, no markdown.`;
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: ALLOWED_MODEL,
+        max_tokens: 150,
+        system,
+        messages: [{ role: 'user', content: context }],
+      }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const text = (data?.content?.find?.((c) => c.type === 'text')?.text || '').trim();
+    if (!text) return null;
+    return text.slice(0, max + 20);
+  } catch { return null; }
+}
+
 async function handleWeekKickoff(env, etDate) {
   // The active week is the one whose week_start is this week's Monday.
   const monday = mondayOfWeek(etDate);
@@ -585,10 +616,16 @@ async function handleWeekKickoff(env, etDate) {
   const players = Object.keys(rosters).filter((p) => (rosters[p] || []).length >= MAX_PICKS);
   if (!players.length) return { sent: 0, cleaned: 0, note: 'no rosters' };
 
+  const { persona } = pickStyleForWeek(week.week_start);
+  const aiBody = await generateShortPushBody(env, {
+    persona,
+    context: `Markets just opened for the trading week of ${week.week_start}. ${players.length} portfolios are now live. Scores are zero. Write a single hype push body kicking off the week.`,
+    max: 140,
+  });
   const title = '🔔 Opening bell!';
-  const body = players.length === 1
+  const body = aiBody || (players.length === 1
     ? `Markets are open — your picks are live. Good luck this week. 📈`
-    : `Markets are open — ${players.length} portfolios are live. May the best picks win. 📈`;
+    : `Markets are open — ${players.length} portfolios are live. May the best picks win. 📈`);
 
   return broadcastPush(env, { title, body, tag: `pit-kickoff-${monday}` });
 }
@@ -603,8 +640,26 @@ async function handleWeekFinalDayKickoff(env, etDate) {
   const players = Object.keys(week.rosters || {}).filter((p) => (week.rosters[p] || []).length >= MAX_PICKS);
   if (!players.length) return { sent: 0, cleaned: 0, note: 'no rosters' };
 
+  // Mid-week standings from the latest live prices so the persona can
+  // reference who's leading / trailing into the final day.
+  const scores = computeScores(week.rosters || {}, week.prices_open || {}, week.prices_live || {});
+  const sorted = Object.entries(scores).filter(([, v]) => v !== null).sort((a, b) => b[1] - a[1]);
+  const standingsLine = sorted.length
+    ? sorted.map(([p, v]) => `${p} ${fmt(v)}`).join(', ')
+    : '(no live scores yet)';
+
+  const { persona, angle } = pickStyleForWeek(week.week_start);
+  const aiBody = await generateShortPushBody(env, {
+    persona,
+    context: `It is the morning of the LAST trading day of the week for "The Pit". Markets open now and close at 4 PM ET. Use one of these framings if natural: ${angle}.
+
+Mid-week standings: ${standingsLine}
+
+Write a single push body that builds final-day drama. Reference the standings briefly only if it fits your voice.`,
+    max: 140,
+  });
   const title = '🔔 Final bell day!';
-  const body = 'Last day of the market week. Who will shine, who will stumble?';
+  const body = aiBody || 'Last day of the market week. Who will shine, who will stumble?';
   return broadcastPush(env, { title, body, tag: `pit-finalday-${monday}` });
 }
 
