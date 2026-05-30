@@ -745,9 +745,22 @@ async function fhSearch(q) {
   const r = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(q)}&token=${FH_KEY}`);
   if (!r.ok) return [];
   const d = await r.json();
-  return (d.result || [])
-    .filter(x => (x.type === 'Common Stock' || x.type === 'ETP') && isUSSymbol(x.displaySymbol || x.symbol))
-    .slice(0, 5);
+  // Dedupe by uppercase symbol — Finnhub sometimes returns the same ticker
+  // twice with different description casing (e.g. "APPLE INC" vs "Apple Inc").
+  // Prefer the entry with mixed-case description (looks better in the dropdown).
+  const seen = new Map();
+  for (const x of (d.result || [])) {
+    if (x.type !== 'Common Stock' && x.type !== 'ETP') continue;
+    const sym = (x.displaySymbol || x.symbol || '').toUpperCase();
+    if (!sym || !isUSSymbol(sym)) continue;
+    const desc = x.description || '';
+    const isMixedCase = /[a-z]/.test(desc);
+    if (!seen.has(sym) || (isMixedCase && !/[a-z]/.test(seen.get(sym).description || ''))) {
+      seen.set(sym, x);
+    }
+    if (seen.size >= 5) break;
+  }
+  return Array.from(seen.values()).slice(0, 5);
 }
 async function getQuotesBatch(tickers) {
   const out = {};
