@@ -7,14 +7,17 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('push', (event) => {
-  let data = { title: 'The Pit', body: 'Reminder' };
+  // OS already labels the notification with the PWA name ('The Pit'), so the
+  // title shouldn't include 'The Pit' again. Fallback title is intentionally
+  // neutral for the rare case event.data isn't valid JSON.
+  let data = { title: 'Update', body: 'Open the app for details' };
   try {
     if (event.data) data = event.data.json();
   } catch {
-    try { data = { title: 'The Pit', body: event.data.text() }; } catch {}
+    try { data = { title: 'Update', body: event.data.text() }; } catch {}
   }
   event.waitUntil(
-    self.registration.showNotification(data.title || 'The Pit', {
+    self.registration.showNotification(data.title || 'Update', {
       body: data.body || '',
       tag: data.tag || 'the-pit',
       data: { url: data.url || '/' },

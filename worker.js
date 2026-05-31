@@ -541,7 +541,7 @@ async function handleFridayClose(env) {
   const winner = sorted[0];
   const loser = sorted[sorted.length - 1];
 
-  const titleText = '🏁 The Pit — week wrapped';
+  const titleText = '🏁 Week wrapped';
   const bodyText = headline
     ? `${headline} · Next draft is open`
     : winner
@@ -757,7 +757,7 @@ async function handleScheduled(env) {
 
   let sent = 0, cleaned = 0;
   const isLastCall = etWeekday === 'Sun';
-  const titleBase = isLastCall ? '⏰ The Pit — 4 hours to lock' : '📝 The Pit — make your picks';
+  const titleBase = isLastCall ? '⏰ 4 hours to lock' : '📝 Make your picks';
 
   for (const sub of subs) {
     const player = sub.player_name;
@@ -931,7 +931,7 @@ export default {
       }
       let body;
       try { body = await request.json(); } catch { return json({ error: 'invalid json' }, 400); }
-      const title = typeof body.title === 'string' && body.title ? body.title.slice(0, 80) : 'The Pit';
+      const title = typeof body.title === 'string' && body.title ? body.title.slice(0, 80) : 'Update';
       const text = typeof body.body === 'string' ? body.body.slice(0, 200) : '';
       const targetUrl = typeof body.url === 'string' && body.url.startsWith('/') ? body.url : '/';
       const player = typeof body.player === 'string' ? body.player : null;
