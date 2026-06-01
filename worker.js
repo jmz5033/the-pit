@@ -971,6 +971,65 @@ export default {
       }
     }
 
+    if (url.pathname === '/api/open-sweep' && request.method === 'POST') {
+      // Admin-only: sweep prices_open for the current live week. For each
+      // ticker we already have an open price for, compare to Finnhub's current
+      // [l, h] range; if the stored open falls outside that range it was a
+      // stale tick and we patch it to the real q.o. Returns the list of
+      // patched + skipped + errored tickers so the admin can verify.
+      if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
+        return json({ error: 'forbidden' }, 403);
+      }
+      if (!env.FH_KEY) return json({ error: 'FH_KEY not set' }, 500);
+      const weeks = await sbGet(env, 'sdl_weeks?status=eq.live&order=week_start.desc&limit=1');
+      if (!weeks || !weeks.length) return json({ error: 'no live week' }, 404);
+      const week = weeks[0];
+      const opens = week.prices_open || {};
+      const tickers = Object.keys(opens);
+      if (!tickers.length) return json({ note: 'no opens to sweep', checked: 0 });
+
+      // 1.1s between Finnhub calls keeps us comfortably under the 60/min
+      // free-tier limit even if the worker shares budget with other calls.
+      const patched = {}, suspiciousLog = [], errors = [];
+      for (const t of tickers) {
+        await new Promise((r) => setTimeout(r, 1100));
+        try {
+          const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${env.FH_KEY}`);
+          if (!r.ok) { errors.push({ t, status: r.status }); continue; }
+          const d = await r.json();
+          if (!(d.l > 0) || !(d.h > 0)) continue;
+          const stored = Number(opens[t]);
+          if (!Number.isFinite(stored)) continue;
+          const inRange = stored >= d.l * 0.999 && stored <= d.h * 1.001;
+          if (inRange) continue;
+          // Stored is outside today's range. Only patch if q.o itself is in
+          // range — otherwise q.o is also stale and we'd just swap one bad
+          // value for another.
+          if (typeof d.o === 'number' && d.o >= d.l * 0.999 && d.o <= d.h * 1.001) {
+            patched[t] = d.o;
+            suspiciousLog.push({ t, stored, replaced_with: d.o, l: d.l, h: d.h });
+          } else {
+            suspiciousLog.push({ t, stored, l: d.l, h: d.h, o: d.o, note: 'q.o also stale, not patched' });
+          }
+        } catch (e) {
+          errors.push({ t, err: e.message || String(e) });
+        }
+      }
+
+      if (Object.keys(patched).length) {
+        const newOpens = { ...opens, ...patched };
+        await sbPatch(env, `sdl_weeks?id=eq.${week.id}`, { prices_open: newOpens }).catch(() => {});
+      }
+
+      return json({
+        checked: tickers.length,
+        suspicious: suspiciousLog.length,
+        patched: Object.keys(patched).length,
+        details: suspiciousLog,
+        errors,
+      });
+    }
+
     if (url.pathname === '/api/draft-lock-summary' && request.method === 'POST') {
       // Admin-only: fire the Sunday 8 PM ET draft-lock summary push on demand.
       if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
