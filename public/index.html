@@ -723,12 +723,17 @@ async function sb(path, method='GET', body=null) {
 // ─── FINNHUB ──────────────────────────────────────────────────────────────────
 // Finnhub free tier only quotes US-listed symbols. Block foreign-exchange
 // suffixes so players can't pick a ticker whose P&L we can never resolve.
-// US share classes are a single letter (BRK.A, BF.B); .L is London → block.
+// US share classes are a single letter (BRK.A, BF.B). Foreign exchanges that
+// share that single-letter shape — .L (London), .F (Frankfurt) — must be
+// blocked; otherwise they slip past and never get prices on Finnhub's free
+// tier. Add more here if more foreign 1-letter codes show up.
+const FOREIGN_SINGLE_LETTER_SUFFIXES = new Set(['L', 'F']);
 function isUSSymbol(s) {
   const m = s && String(s).match(/\.([A-Za-z]+)$/);
   if (!m) return true;
   const suf = m[1].toUpperCase();
-  return suf.length === 1 && suf !== 'L';
+  if (suf.length === 1) return !FOREIGN_SINGLE_LETTER_SUFFIXES.has(suf);
+  return false;
 }
 async function fhQuote(t) {
   const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${t}&token=${FH_KEY}`);
