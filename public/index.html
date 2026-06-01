@@ -1107,10 +1107,13 @@ function firstTradingDay(weekStart) {
 }
 
 function getOpenSnapshotTime(weekStart) {
-  // First trading day of the week at 9:30AM ET (skips holiday Mondays)
+  // First trading day of the week at 9:35 AM ET. Pushed 5 min past the real
+  // open so Finnhub's q.o has settled — at 9:30:00 sharp the day's open is
+  // sometimes still a stale tick from before market open (we saw OKTA snapshot
+  // a ~$107 stale value when the real open was ~$126).
   const day = firstTradingDay(weekStart);
   const offset = etOffsetHours();
-  day.setUTCHours(9 - offset, 30, 0, 0);
+  day.setUTCHours(9 - offset, 35, 0, 0);
   return day;
 }
 
@@ -1295,8 +1298,15 @@ async function refreshLivePrices() {
       liveChanged = true;
     }
     if (!opens[t] && typeof q.o === 'number' && q.o > 0) {
-      opens[t] = q.o;
-      openChanged = true;
+      // Only accept the open if it falls within today's [l, h] range —
+      // a stale q.o from before market open would land outside it.
+      const inRange = typeof q.l === 'number' && typeof q.h === 'number'
+        && q.l > 0 && q.h > 0
+        && q.o >= q.l * 0.999 && q.o <= q.h * 1.001;
+      if (inRange) {
+        opens[t] = q.o;
+        openChanged = true;
+      }
     }
   }
   if (!liveChanged && !openChanged) return;
@@ -1518,8 +1528,15 @@ async function snapshotPrices(type) {
       const q = quotes[t];
       if (!q) { stillMissing.push(t); continue; }
       const v = type === 'open' ? q.o : q.c;
-      if (typeof v === 'number' && v > 0) prices[t] = v;
-      else stillMissing.push(t);
+      if (typeof v !== 'number' || v <= 0) { stillMissing.push(t); continue; }
+      // Plausibility guard on the open: a real q.o has to fall within today's
+      // intraday range [l, h]. A stale value from before market open (or a
+      // ghost tick) lands outside that range. We saw OKTA register $107.5
+      // when the day's true range was $126.4-$139.8 — clearly stale.
+      if (type === 'open' && typeof q.l === 'number' && typeof q.h === 'number' && q.l > 0 && q.h > 0) {
+        if (v < q.l * 0.999 || v > q.h * 1.001) { stillMissing.push(t); continue; }
+      }
+      prices[t] = v;
     }
     toFetch = stillMissing;
   }
