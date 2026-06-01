@@ -663,6 +663,48 @@ Write a single push body that builds final-day drama. Reference the standings br
   return broadcastPush(env, { title, body, tag: `pit-finalday-${monday}` });
 }
 
+async function handleDraftLockSummary(env, etDate) {
+  // Fires at 8 PM ET Sunday (the lock). The week that just locked has its
+  // week_start on tomorrow's Monday.
+  const d = new Date(etDate + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  const monday = d.toISOString().slice(0, 10);
+  const weeks = await sbGet(env, `sdl_weeks?week_start=eq.${monday}&select=*`);
+  if (!weeks || !weeks.length) return { sent: 0, cleaned: 0, note: 'no week' };
+  const week = weeks[0];
+  const rosters = week.rosters || {};
+  const players = Object.keys(rosters).filter((p) => (rosters[p] || []).length >= MAX_PICKS);
+  if (!players.length) return { sent: 0, cleaned: 0, note: 'no rosters' };
+
+  // Aggregate themes: tickers picked by multiple players + top sectors.
+  const tickerCounts = {}, sectorCounts = {};
+  for (const p of players) {
+    for (const pick of (rosters[p] || [])) {
+      tickerCounts[pick.ticker] = (tickerCounts[pick.ticker] || 0) + 1;
+      sectorCounts[pick.sector || 'Other'] = (sectorCounts[pick.sector || 'Other'] || 0) + 1;
+    }
+  }
+  const popular = Object.entries(tickerCounts).filter(([, c]) => c >= 2).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const topSectors = Object.entries(sectorCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const playerLines = players.map((p) => `${p}: ${(rosters[p] || []).map((x) => x.ticker).join(', ')}`).join('\n');
+
+  const { persona } = pickStyleForWeek(week.week_start);
+  const context = `Draft just locked for the trading week of ${week.week_start}. ${players.length} players are in.
+
+Rosters:
+${playerLines}
+
+Tickers picked by 2+ players: ${popular.length ? popular.map(([t, c]) => `${t} (×${c})`).join(', ') : 'none — everyone went their own way'}
+Top sectors across all rosters: ${topSectors.map(([s, c]) => `${s} (${c})`).join(', ')}
+
+Write a single push body (1-2 sentences, max 160 chars) that calls out a theme — consensus picks, sector concentration, a notable contrarian, or how the field is shaping up. Build anticipation for Monday's open.`;
+
+  const aiBody = await generateShortPushBody(env, { persona, context, max: 160 });
+  const title = '🔒 Picks locked in!';
+  const body = aiBody || `${players.length} players locked in for the week. Trading kicks off Monday — good luck.`;
+  return broadcastPush(env, { title, body, tag: `pit-lock-${monday}` });
+}
+
 async function broadcastPush(env, { title, body, tag }) {
   const subs = await sbGet(env, 'sdl_push_subscriptions?select=*');
   let sent = 0, cleaned = 0;
@@ -706,6 +748,8 @@ async function handleScheduled(env) {
   // Reminders: 4 PM ET Sat/Sun. Close: 4 PM ET on the week's last trading day.
   const reminderTime = etHour === 16 && etMinute === 0 && (etWeekday === 'Sat' || etWeekday === 'Sun');
   const closeTime = etHour === 16 && etMinute === 0 && isTradingDay && etDate === lastDay;
+  // Draft-lock summary: 8 PM ET Sunday — themes across all locked rosters.
+  const lockSummaryTime = etHour === 20 && etMinute === 0 && etWeekday === 'Sun';
 
   if (kickoffTime) {
     try { await handleWeekKickoff(env, etDate); } catch {}
@@ -714,6 +758,11 @@ async function handleScheduled(env) {
 
   if (finalDayKickoffTime) {
     try { await handleWeekFinalDayKickoff(env, etDate); } catch {}
+    return;
+  }
+
+  if (lockSummaryTime) {
+    try { await handleDraftLockSummary(env, etDate); } catch {}
     return;
   }
 
@@ -916,6 +965,20 @@ export default {
       const etDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
       try {
         const summary = await handleWeekFinalDayKickoff(env, etDate);
+        return json(summary);
+      } catch (e) {
+        return json({ error: e.message || String(e) }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/draft-lock-summary' && request.method === 'POST') {
+      // Admin-only: fire the Sunday 8 PM ET draft-lock summary push on demand.
+      if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
+        return json({ error: 'forbidden' }, 403);
+      }
+      const etDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+      try {
+        const summary = await handleDraftLockSummary(env, etDate);
         return json(summary);
       } catch (e) {
         return json({ error: e.message || String(e) }, 500);

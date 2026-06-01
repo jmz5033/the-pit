@@ -45,6 +45,9 @@ Practical implications when writing worker code:
   where first === last so it doesn't double-fire alongside the opening kickoff.
 - **Sat 4 PM ET** and **Sun 4 PM ET**: reminder push to players who haven't
   submitted yet for the upcoming draft week.
+- **Sun 8 PM ET**: draft-lock summary broadcast (`handleDraftLockSummary`) —
+  AI-generated themes/consensus across the now-locked rosters for the
+  upcoming week.
 - **Last trading day 4 PM ET** (usually Fri, Thu on holiday-Friday weeks):
   close-of-week broadcast — worker snapshots `prices_close` from Finnhub,
   calls Anthropic for a recap + one-line headline (both cached on `sdl_weeks`),
