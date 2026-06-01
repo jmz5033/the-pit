@@ -245,7 +245,6 @@ canvas.pit-chart {
 
 /* HEATMAP */
 .heatmap-wrap { width: 100%; aspect-ratio: 4 / 3; position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; background: var(--surface); }
-.heatmap-wrap[style*="height"] { aspect-ratio: auto; }
 .heatmap { position: absolute; inset: 0; }
 .hm-cell { position: absolute; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.08); padding: 3px 5px; color: #fff; font-family: 'JetBrains Mono', monospace; overflow: hidden; transition: transform 0.15s ease; cursor: pointer; }
 .hm-cell:hover { transform: scale(1.02); z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
@@ -1675,11 +1674,18 @@ function buildPositionHeatmap(rosters, open, live) {
   }
   const items = Object.values(byTicker).map(it => ({ ...it, value: it.totalAlloc }));
   if (!items.length) return '';
-  // Size the heatmap by number of unique tickers so the tiles don't get
-  // crowded as more players join. 360px floor, 900px ceiling.
+  // Pick the container aspect-ratio (and matching squarify W/H) by ticker
+  // count. Few tickers → wide+short. More tickers → squarer, so the
+  // container grows taller alongside its width without distorting tiles.
+  // squarify W/H matches the CSS aspect so partitioning is in sync with
+  // rendered shape across any viewport width.
   const numTickers = items.length;
-  const H = Math.min(900, Math.max(360, 260 + numTickers * 8));
-  const W = 1100;
+  let aspectCss, W, H;
+  if (numTickers <= 15)      { aspectCss = '16 / 9';  W = 1600; H = 900; }
+  else if (numTickers <= 30) { aspectCss = '16 / 10'; W = 1600; H = 1000; }
+  else if (numTickers <= 50) { aspectCss = '4 / 3';   W = 1200; H = 900; }
+  else if (numTickers <= 70) { aspectCss = '5 / 4';   W = 1000; H = 800; }
+  else                       { aspectCss = '1 / 1';   W = 1000; H = 1000; }
   const tiles = squarify(items, 0, 0, W, H);
   const cells = tiles.map(t => {
     const it = t.item;
@@ -1711,7 +1717,7 @@ function buildPositionHeatmap(rosters, open, live) {
     </div>`;
   }).join('');
   return `<div class="section-title" style="margin-top:4px">Position Heatmap</div>
-    <div class="heatmap-wrap" style="height:${H}px"><div class="heatmap">${cells}</div><div id="heatmap-tooltip" class="hm-tooltip" hidden></div></div>`;
+    <div class="heatmap-wrap" style="aspect-ratio:${aspectCss}"><div class="heatmap">${cells}</div><div id="heatmap-tooltip" class="hm-tooltip" hidden></div></div>`;
 }
 
 function showHeatmapTooltip(e) {
