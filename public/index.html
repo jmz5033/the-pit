@@ -1267,12 +1267,35 @@ async function refreshLivePrices() {
   if (!WK || WK.status !== 'live') return;
   const tickers = getAllTickers();
   if (!tickers.length) return;
-  const fresh = await fetchLive(tickers);
-  if (!Object.keys(fresh).length) return;
-  const livePrices = { ...(WK.prices_live || {}), ...fresh };
-  await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', { prices_live: livePrices });
-  WK.prices_live = livePrices;
-  await snapshotDailyPrices(livePrices);
+  const quotes = await getQuotesBatch(tickers);
+
+  // Pull both c (live) and o (today's open) from the same batch so we can
+  // backfill any ticker whose open was missed during the Mon morning snapshot
+  // (Finnhub occasionally returns 0/undefined for q.o on lightly-traded names
+  // at exactly 9:30 ET — e.g. FIVE in week 9).
+  const livePrices = { ...(WK.prices_live || {}) };
+  const opens = { ...(WK.prices_open || {}) };
+  let liveChanged = false, openChanged = false;
+  for (const [t, q] of Object.entries(quotes)) {
+    if (!q) continue;
+    if (typeof q.c === 'number' && q.c > 0 && livePrices[t] !== q.c) {
+      livePrices[t] = q.c;
+      liveChanged = true;
+    }
+    if (!opens[t] && typeof q.o === 'number' && q.o > 0) {
+      opens[t] = q.o;
+      openChanged = true;
+    }
+  }
+  if (!liveChanged && !openChanged) return;
+
+  const patch = {};
+  if (liveChanged) patch.prices_live = livePrices;
+  if (openChanged) patch.prices_open = opens;
+  await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', patch);
+  if (liveChanged) WK.prices_live = livePrices;
+  if (openChanged) WK.prices_open = opens;
+  if (liveChanged) await snapshotDailyPrices(livePrices);
 }
 
 async function renderWeek() {
@@ -1470,7 +1493,14 @@ async function snapshotPrices(type) {
   if (!tickers.length) return;
   const quotes = await getQuotesBatch(tickers);
   const prices = {};
-  for (const [t,q] of Object.entries(quotes)) if (q) prices[t] = type === 'open' ? q.o : q.c;
+  // Only store values Finnhub actually returned (positive numbers). Tickers
+  // that came back with 0 or undefined get skipped here and are backfilled
+  // on subsequent live-price refreshes from q.o.
+  for (const [t,q] of Object.entries(quotes)) {
+    if (!q) continue;
+    const v = type === 'open' ? q.o : q.c;
+    if (typeof v === 'number' && v > 0) prices[t] = v;
+  }
   const field = type === 'open' ? 'prices_open' : 'prices_close';
   const patch = { [field]: prices };
   if (type === 'open') patch.status = 'live';
