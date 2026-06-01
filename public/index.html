@@ -723,17 +723,21 @@ async function sb(path, method='GET', body=null) {
 // ─── FINNHUB ──────────────────────────────────────────────────────────────────
 // Finnhub free tier only quotes US-listed symbols. Block foreign-exchange
 // suffixes so players can't pick a ticker whose P&L we can never resolve.
-// US share classes are a single letter (BRK.A, BF.B). Foreign exchanges that
-// share that single-letter shape — .L (London), .F (Frankfurt) — must be
-// blocked; otherwise they slip past and never get prices on Finnhub's free
-// tier. Add more here if more foreign 1-letter codes show up.
-const FOREIGN_SINGLE_LETTER_SUFFIXES = new Set(['L', 'F']);
+// US-listed only. Pure ticker (1-6 alphanumerics, no dot) OR
+// base ticker + .A / .B / .C share-class suffix (BRK.A, BF.B, HEI.A).
+// Everything else — single-letter foreign codes (.L, .F, .V), multi-letter
+// foreign exchange codes (.TO, .HK, .NS, .DE…), and obscure US suffixes
+// (.U for SPAC units, .W for warrants) — gets rejected. Finnhub's free tier
+// only prices US listings, so anything outside this pattern would never
+// register a P&L during the week.
+const US_SHARE_CLASS_SUFFIXES = new Set(['A','B','C']);
 function isUSSymbol(s) {
-  const m = s && String(s).match(/\.([A-Za-z]+)$/);
-  if (!m) return true;
-  const suf = m[1].toUpperCase();
-  if (suf.length === 1) return !FOREIGN_SINGLE_LETTER_SUFFIXES.has(suf);
-  return false;
+  if (!s) return false;
+  const str = String(s).toUpperCase();
+  if (!str.includes('.')) return /^[A-Z0-9]{1,6}$/.test(str);
+  const m = str.match(/^([A-Z0-9]{1,5})\.([A-Z])$/);
+  if (!m) return false;
+  return US_SHARE_CLASS_SUFFIXES.has(m[2]);
 }
 async function fhQuote(t) {
   const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${t}&token=${FH_KEY}`);
@@ -775,7 +779,10 @@ async function getQuotesBatch(tickers) {
 
 
 // ─── PLAYER COLORS & DAILY SNAPSHOTS ──────────────────────────────────────────
-const PLAYER_COLORS = ['#e8ff47','#3b82f6','#f97316','#22c55e','#e879f9','#a78bfa'];
+// Distinct enough that 10 players can all be told apart at a glance. Order
+// is hue-rotating so consecutive joiners (assigned in join order) don't end
+// up next to similar colors.
+const PLAYER_COLORS = ['#e8ff47','#3b82f6','#f97316','#22c55e','#e879f9','#a78bfa','#fb7185','#06b6d4','#fbbf24','#ec4899'];
 let playerOrder = []; // tracks player join order for consistent colors
 
 function getPlayerColor(name) {
@@ -1496,15 +1503,25 @@ function getAllTickers() {
 async function snapshotPrices(type) {
   const tickers = getAllTickers();
   if (!tickers.length) return;
-  const quotes = await getQuotesBatch(tickers);
+  // Open snapshot retries up to 3 attempts with a short delay because Finnhub
+  // sometimes returns q.o=0/undefined at exactly 9:30:00 ET when the day's
+  // open hasn't been computed yet. Close runs once — by 4 PM the day's
+  // numbers are settled and a retry won't change anything.
+  const maxAttempts = type === 'open' ? 3 : 1;
   const prices = {};
-  // Only store values Finnhub actually returned (positive numbers). Tickers
-  // that came back with 0 or undefined get skipped here and are backfilled
-  // on subsequent live-price refreshes from q.o.
-  for (const [t,q] of Object.entries(quotes)) {
-    if (!q) continue;
-    const v = type === 'open' ? q.o : q.c;
-    if (typeof v === 'number' && v > 0) prices[t] = v;
+  let toFetch = [...tickers];
+  for (let attempt = 0; attempt < maxAttempts && toFetch.length; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 3000));
+    const quotes = await getQuotesBatch(toFetch);
+    const stillMissing = [];
+    for (const t of toFetch) {
+      const q = quotes[t];
+      if (!q) { stillMissing.push(t); continue; }
+      const v = type === 'open' ? q.o : q.c;
+      if (typeof v === 'number' && v > 0) prices[t] = v;
+      else stillMissing.push(t);
+    }
+    toFetch = stillMissing;
   }
   const field = type === 'open' ? 'prices_open' : 'prices_close';
   const patch = { [field]: prices };
