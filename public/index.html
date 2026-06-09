@@ -51,6 +51,9 @@ input:focus { border-color: var(--accent); }
 .players-preview-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 10px; }
 .player-chip { display: inline-flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 5px; border: 1px solid var(--border2); background: var(--surface2); color: var(--muted2); margin: 3px; }
 .player-chip.you { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.player-chip-tap { cursor: pointer; transition: border-color 0.12s ease, color 0.12s ease, transform 0.08s ease; user-select: none; }
+.player-chip-tap:hover { border-color: var(--accent); color: var(--accent); }
+.player-chip-tap:active { transform: scale(0.96); }
 
 /* BUTTONS */
 .btn { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 0.5px; text-transform: uppercase; padding: 11px 22px; border-radius: 6px; border: none; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
@@ -1170,11 +1173,17 @@ async function initJoinScreen() {
       if (players.length > 0) {
         document.getElementById('join-players-wrap').classList.remove('hidden');
         document.getElementById('join-players-list').innerHTML = players
-          .map(p => `<span class="player-chip">${esc(p)}</span>`)
+          .map(p => `<span class="player-chip player-chip-tap" onclick="joinAs(${esc(JSON.stringify(p))})">${esc(p)}</span>`)
           .join('');
       }
     }
   } catch {}
+}
+
+function joinAs(name) {
+  if (typeof name !== 'string' || !name.trim()) return;
+  document.getElementById('join-name').value = name;
+  joinLeague();
 }
 
 async function joinLeague() {
