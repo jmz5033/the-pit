@@ -1159,16 +1159,17 @@ function timeUntilLock(weekStart) {
 }
 
 function isDraftOpen(weekStart) {
-  // Draft opens Fri 4PM ET of the previous week (i.e., 9 days before the following Friday)
-  // = simply: after Fri 4PM ET the week prior, and before Sun 8PM ET lock
+  // Draft opens when the PREVIOUS week's last trading day closes at 4 PM ET
+  // (Thursday on holiday-Friday weeks like Juneteenth/Christmas) and stays
+  // open until the Sunday 8 PM ET lock for this week's Monday.
   const now = new Date();
   const lock = getLockTime(weekStart);
-  // Draft opens when the PREVIOUS week closes (Fri 4PM ET, 7 days before this week's Fri)
   const mon = new Date(weekStart + 'T00:00:00Z');
-  const prevFri = new Date(mon); prevFri.setUTCDate(mon.getUTCDate() - 3);
+  const prevMon = new Date(mon); prevMon.setUTCDate(mon.getUTCDate() - 7);
+  const prevClose = lastTradingDay(prevMon.toISOString().slice(0, 10));
   const offset = etOffsetHours();
-  prevFri.setUTCHours(16 - offset, 0, 0, 0);
-  return now >= prevFri && now < lock;
+  prevClose.setUTCHours(16 - offset, 0, 0, 0);
+  return now >= prevClose && now < lock;
 }
 
 // ─── JOIN SCREEN ──────────────────────────────────────────────────────────────
@@ -1459,9 +1460,9 @@ async function renderWeek() {
   if (!myDone && draftOpen && !locked) {
     html += `<div id="draft-pane"></div>`;
   } else if (!myDone && locked) {
-    html += `<div class="info-bar">⏰ <strong>Draft is locked.</strong> Picks lock Sunday 8 PM ET. Draft opens again Friday after market close.</div>`;
+    html += `<div class="info-bar">⏰ <strong>Draft is locked.</strong> Picks lock Sunday 8 PM ET. Draft opens again at the next market close.</div>`;
   } else if (!myDone && !draftOpen) {
-    html += `<div class="info-bar">📅 <strong>Draft opens Friday 4 PM ET</strong> after the current week's winner is announced.</div>`;
+    html += `<div class="info-bar">📅 <strong>Draft opens after this week's market close</strong> (Fri 4 PM ET, or Thu on holiday-Friday weeks).</div>`;
   } else if (myDone) {
     // Position heatmap + Live positions table — only once open prices are
     // snapshotted, and only reveal everyone's picks after the Sunday 8PM ET lock

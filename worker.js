@@ -49,7 +49,7 @@ function lastTradingDayOfWeek(etDateStr) {
 }
 
 // ─── ANTHROPIC RECAP ────────────────────────────────────────────────────────
-const ALLOWED_MODEL = 'claude-sonnet-4-20250514';
+const ALLOWED_MODEL = 'claude-sonnet-4-6';
 const MAX_TOKENS = 300;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_PLAYERS = 10;
