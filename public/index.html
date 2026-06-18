@@ -2694,6 +2694,17 @@ function showWinnerCelebration() {
   if (_celebrationShown) return;
   _celebrationShown = true;
 
+  // Count losers (anyone with a full roster this week who isn't the winner)
+  const rosters = (WK && WK.rosters) || {};
+  const losers = Object.keys(rosters).filter(p =>
+    p !== MY_NAME && (rosters[p] || []).length === MAX_PICKS
+  );
+  const beerText = losers.length === 0
+    ? 'Clean win 🍺'
+    : losers.length === 1
+      ? `${esc(losers[0])} owes you a 🍺`
+      : `${losers.length} losers owe you a 🍺 each`;
+
   // Show a full-screen confetti + message overlay
   const overlay = document.createElement('div');
   overlay.id = 'winner-overlay';
@@ -2720,7 +2731,7 @@ function showWinnerCelebration() {
     <div style="text-align:center;padding:0 32px;animation:winner-pop 0.5s cubic-bezier(0.34,1.56,0.64,1) both">
       <div style="font-size:64px;margin-bottom:8px">🏆</div>
       <div style="font-family:'Syne',sans-serif;font-size:32px;font-weight:800;letter-spacing:-1px;color:var(--accent);line-height:1.1">You won<br>this week!</div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted2);margin-top:12px;animation:winner-sub 0.4s 0.4s ease both">Trent owes you a 🍺</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted2);margin-top:12px;animation:winner-sub 0.4s 0.4s ease both">${beerText}</div>
     </div>
     <button onclick="document.getElementById('winner-overlay').remove()" style="margin-top:32px;font-family:'Syne',sans-serif;font-weight:700;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;padding:12px 28px;border-radius:6px;border:none;background:var(--accent);color:#0d0d0f;cursor:pointer;animation:winner-sub 0.4s 0.6s ease both;opacity:0">Collect your beer →</button>
   `;
