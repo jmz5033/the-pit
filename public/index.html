@@ -1051,30 +1051,28 @@ function weekBounds() {
 }
 
 function getActiveWeekStart() {
-  // After Fri 4PM ET, draft for NEXT week is open — return next Monday.
-  // Otherwise return this week's Monday.
+  // After the week's actual close (4 PM ET on the last trading day — Friday
+  // normally, Thursday on holiday-Friday weeks like Juneteenth/Christmas),
+  // the draft for the upcoming week is open. Return next Monday from then on.
   const now = new Date();
   const offset = etOffsetHours();
 
-  // This week's Monday (UTC)
   const day = now.getUTCDay();
   const diff = day === 0 ? -6 : 1 - day;
   const thisMon = new Date(now);
   thisMon.setUTCDate(now.getUTCDate() + diff);
   thisMon.setUTCHours(0, 0, 0, 0);
 
-  // This week's Friday 4PM ET in UTC
-  const thisFri = new Date(thisMon);
-  thisFri.setUTCDate(thisMon.getUTCDate() + 4);
-  thisFri.setUTCHours(16 - offset, 0, 0, 0);
+  const thisMonStr = thisMon.toISOString().slice(0, 10);
+  const thisCloseDay = lastTradingDay(thisMonStr);
+  thisCloseDay.setUTCHours(16 - offset, 0, 0, 0);
 
-  if (now >= thisFri) {
-    // After Fri close — next week
+  if (now >= thisCloseDay) {
     const nextMon = new Date(thisMon);
     nextMon.setUTCDate(thisMon.getUTCDate() + 7);
     return nextMon.toISOString().slice(0, 10);
   }
-  return thisMon.toISOString().slice(0, 10);
+  return thisMonStr;
 }
 
 function getLockTime(weekStart) {
@@ -1095,16 +1093,28 @@ const MARKET_HOLIDAYS = new Set([
   '2027-06-18','2027-07-05','2027-09-06','2027-11-25','2027-12-24',
 ]);
 
+// First/last trading day of a Mon-Fri week, accounting for holidays. Used so
+// holiday-Monday weeks open Tuesday and holiday-Friday weeks close Thursday.
 function firstTradingDay(weekStart) {
-  // weekStart is the Monday; advance past weekends + market holidays so a
-  // holiday-Monday week (e.g. Memorial Day) bases its open on the real first
-  // trading day instead of snapshotting stale prices on the closed day.
   const d = new Date(weekStart + 'T00:00:00Z');
   for (let i = 0; i < 5; i++) {
     const ds = d.toISOString().slice(0, 10);
     const dow = d.getUTCDay();
     if (dow !== 0 && dow !== 6 && !MARKET_HOLIDAYS.has(ds)) return d;
     d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return d;
+}
+
+function lastTradingDay(weekStart) {
+  // Walk back from this week's Friday past any holidays / weekends
+  const d = new Date(weekStart + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 4);
+  for (let i = 0; i < 5; i++) {
+    const ds = d.toISOString().slice(0, 10);
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !MARKET_HOLIDAYS.has(ds)) return d;
+    d.setUTCDate(d.getUTCDate() - 1);
   }
   return d;
 }
@@ -1121,12 +1131,11 @@ function getOpenSnapshotTime(weekStart) {
 }
 
 function getCloseSnapshotTime(weekStart) {
-  // Friday 4PM ET
-  const mon = new Date(weekStart + 'T00:00:00Z');
-  const fri = new Date(mon); fri.setUTCDate(mon.getUTCDate() + 4);
+  // 4 PM ET on the last trading day of the week (Thu on a holiday-Friday week)
+  const day = lastTradingDay(weekStart);
   const offset = etOffsetHours();
-  fri.setUTCHours(16 - offset, 0, 0, 0);
-  return fri;
+  day.setUTCHours(16 - offset, 0, 0, 0);
+  return day;
 }
 
 function isLocked(weekStart) {
