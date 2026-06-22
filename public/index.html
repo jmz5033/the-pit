@@ -753,6 +753,25 @@ async function fhProfile(t) {
   const d = await r.json();
   return d && d.name ? d : null;
 }
+// Cache of ticker → boolean (true = Finnhub returned a non-zero current price).
+// Populated lazily during search; prevents re-validating the same symbol on
+// every keystroke. Lives for the page session only.
+const _quotableCache = new Map();
+async function isQuotable(sym) {
+  if (_quotableCache.has(sym)) return _quotableCache.get(sym);
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${FH_KEY}`);
+    // Rate-limit / transient errors: don't cache, let the candidate through —
+    // a later add-pick attempt will re-validate. Better to risk one user
+    // adding an untradeable ticker than to silently hide a real one.
+    if (!r.ok) return true;
+    const q = await r.json();
+    const ok = !!(q && typeof q.c === 'number' && q.c > 0);
+    _quotableCache.set(sym, ok);
+    return ok;
+  } catch { return true; }
+}
+
 async function fhSearch(q) {
   const r = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(q)}&token=${FH_KEY}`);
   if (!r.ok) return [];
@@ -770,9 +789,21 @@ async function fhSearch(q) {
     if (!seen.has(sym) || (isMixedCase && !/[a-z]/.test(seen.get(sym).description || ''))) {
       seen.set(sym, x);
     }
-    if (seen.size >= 5) break;
+    // Grab a few more than we need so we can drop unquotable ones and still
+    // have 5 to show.
+    if (seen.size >= 10) break;
   }
-  return Array.from(seen.values()).slice(0, 5);
+  const candidates = Array.from(seen.values());
+
+  // Validate each candidate has a non-zero Finnhub quote. Untradeable picks
+  // (OTC like USBFU, illiquid ETFs, SPAC units) get filtered before the
+  // dropdown ever shows them, so players can't pick something that won't
+  // register a price all week.
+  const validations = await Promise.all(candidates.map(async (x) => {
+    const sym = x.displaySymbol || x.symbol;
+    return (await isQuotable(sym)) ? x : null;
+  }));
+  return validations.filter(Boolean).slice(0, 5);
 }
 async function getQuotesBatch(tickers) {
   const out = {};
