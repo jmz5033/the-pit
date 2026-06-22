@@ -1989,6 +1989,10 @@ function toggleRoster(slug) {
 function renderDraftPane() {
   const el = document.getElementById('draft-pane');
   if (!el) return;
+  // Only auto-focus the ticker search on the FIRST render of the pane in
+  // this view — otherwise blurring an allocation input triggers a re-render
+  // that yanks focus back to the search box.
+  const isFirstRender = !el.querySelector('#ticker-input');
 
   const picks = draftPicks;
   const totalAllocated = picks.reduce((s,p) => s + p.allocation, 0);
@@ -2063,8 +2067,10 @@ function renderDraftPane() {
 
   el.innerHTML = html;
   renderDraftSaveStatus();
-  const inp = document.getElementById('ticker-input');
-  if (inp) inp.focus();
+  if (isFirstRender) {
+    const inp = document.getElementById('ticker-input');
+    if (inp) inp.focus();
+  }
 }
 
 function validatePicks(picks, sectorCount, totalAllocated) {
