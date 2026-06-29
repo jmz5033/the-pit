@@ -1397,9 +1397,13 @@ async function renderWeek() {
     livePrices = WK.prices_live || {};
   }
 
-  // Set player order for consistent colors (MY_NAME first, rest alphabetical)
+  // Set player order for consistent colors — plain alphabetical so every
+  // device sees the same mapping. Previously MY_NAME was forced to index 0,
+  // which meant every player saw THEMSELVES as the yellow accent, and two
+  // players viewing each other's screens (or screenshots) both appeared
+  // yellow. The "you" tag and ★ still distinguish the current user.
   const allRosterPlayers = Object.keys(WK.rosters || {});
-  playerOrder = [MY_NAME, ...allRosterPlayers.filter(p => p !== MY_NAME).sort()];
+  playerOrder = [...allRosterPlayers].sort();
 
   const statusPill = WK.status === 'draft'
     ? (locked ? '<span class="pill pill-closed">Locked</span>' : '<span class="pill pill-draft">Draft open</span>')
