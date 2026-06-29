@@ -825,6 +825,27 @@ function getPlayerColor(name) {
   return PLAYER_COLORS[idx % PLAYER_COLORS.length];
 }
 
+// Build playerOrder by walking every week chronologically and adding each
+// player the first time they appear (alphabetical within a week to break
+// ties deterministically). Same on every device, and a player's slot in the
+// order never changes once assigned — so new joiners get appended at the
+// end and existing players keep their color forever. Runs once at app load
+// before loadWeek/loadHistory render anything.
+async function seedPlayerColorOrder() {
+  try {
+    const rows = await sb('sdl_weeks?order=week_start.asc&select=week_start,rosters');
+    if (!rows || !rows.length) return;
+    const seen = new Set(playerOrder);
+    for (const r of rows) {
+      const players = Object.keys(r.rosters || {}).sort();
+      for (const p of players) {
+        if (!seen.has(p)) { seen.add(p); playerOrder.push(p); }
+      }
+    }
+  } catch {}
+}
+
+
 // Returns today's date string in ET (YYYY-MM-DD)
 function todayET() {
   const offset = etOffsetHours();
@@ -1397,13 +1418,14 @@ async function renderWeek() {
     livePrices = WK.prices_live || {};
   }
 
-  // Set player order for consistent colors — plain alphabetical so every
-  // device sees the same mapping. Previously MY_NAME was forced to index 0,
-  // which meant every player saw THEMSELVES as the yellow accent, and two
-  // players viewing each other's screens (or screenshots) both appeared
-  // yellow. The "you" tag and ★ still distinguish the current user.
+  // Append any roster players not yet in playerOrder. The canonical order
+  // is seeded at app load by seedPlayerColorOrder (chronological first-seen
+  // across all historical weeks), so existing players keep their slot and
+  // brand-new joiners just get appended at the end.
   const allRosterPlayers = Object.keys(WK.rosters || {});
-  playerOrder = [...allRosterPlayers].sort();
+  for (const p of [...allRosterPlayers].sort()) {
+    if (!playerOrder.includes(p)) playerOrder.push(p);
+  }
 
   const statusPill = WK.status === 'draft'
     ? (locked ? '<span class="pill pill-closed">Locked</span>' : '<span class="pill pill-draft">Draft open</span>')
@@ -3127,6 +3149,10 @@ window.addEventListener('load', async () => {
     hide('view-join'); show('view-app');
     document.getElementById('settings-name').textContent = saved;
     document.getElementById('header-meta').innerHTML = `Real market data · Mon–Fri<br>Playing as <strong style="color:var(--accent)">${saved}</strong>`;
+    // Seed playerOrder from history first so colors are stable across weeks
+    // (each player keeps their slot once assigned). loadWeek and loadHistory
+    // then render with the canonical mapping already in place.
+    await seedPlayerColorOrder();
     loadWeek();
     loadHistory();
   }
