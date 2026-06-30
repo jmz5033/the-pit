@@ -2753,6 +2753,110 @@ function renderRecap(el, text) {
 // ─── WINNER CELEBRATION ───────────────────────────────────────────────────────
 let _celebrationShown = false; // only show once per session per week
 
+// Pops a full-screen results overlay on app load if the user hasn't seen the
+// last closed week's results yet. Shows the leaderboard + AI recap and (for
+// the winner) a confetti shower. Once dismissed, the per-week localStorage
+// flag prevents it from showing again on this device. The recap stays
+// accessible via the in-app Weekly Recap button in History.
+async function maybeShowWeekResultsPopup() {
+  if (!MY_NAME) return;
+  try {
+    const rows = await sb('sdl_weeks?status=eq.closed&order=week_start.desc&limit=1&select=*');
+    if (!rows || !rows.length) return;
+    const week = rows[0];
+    const seenKey = `pit_results_seen_${week.week_start}`;
+    if (localStorage.getItem(seenKey) === '1') return;
+    showWeekResultsPopup(week, () => localStorage.setItem(seenKey, '1'));
+  } catch {}
+}
+
+function showWeekResultsPopup(week, onDismiss) {
+  const rosters = week.rosters || {};
+  const open = week.prices_open || {};
+  const close = week.prices_close || {};
+  const scores = {};
+  for (const [player, picks] of Object.entries(rosters)) {
+    if ((picks || []).length !== MAX_PICKS) continue;
+    let total = 0;
+    for (const p of picks) {
+      const op = open[p.ticker], cl = close[p.ticker];
+      if (op && cl && op > 0) total += (cl - op) * (p.allocation / op);
+    }
+    scores[player] = total;
+  }
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  if (!sorted.length) return;
+
+  const winner = sorted[0][0];
+  const isMyWin = winner === MY_NAME;
+  const fmt = (n) => (n >= 0 ? '+$' : '-$') + Math.abs(Math.round(n)).toLocaleString('en-US');
+  const weekLabel = fmtDate(week.week_start);
+
+  // Confetti only when the viewer is the winner
+  let confettiHTML = '';
+  if (isMyWin) {
+    const colors = ['#e8ff47','#22c55e','#3b82f6','#f97316','#e879f9','#a78bfa'];
+    for (let i = 0; i < 30; i++) {
+      const c = colors[i % colors.length];
+      const x = Math.random() * 100;
+      const delay = Math.random() * 1.0;
+      const dur = 1.8 + Math.random() * 1.2;
+      const size = 6 + Math.random() * 7;
+      confettiHTML += `<div style="position:fixed;left:${x}%;top:-20px;width:${size}px;height:${size}px;background:${c};border-radius:${Math.random()>0.5?'50%':'2px'};animation:confetti-fall ${dur}s ${delay}s ease-in forwards;opacity:0;pointer-events:none"></div>`;
+    }
+  }
+
+  const recapHtml = week.recap
+    ? `<div style="margin-top:20px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;text-align:left">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">📝 Weekly Recap</div>
+        <div style="font-family:'Syne',sans-serif;font-size:13px;line-height:1.55;color:var(--ink)">${esc(week.recap).replace(/\n/g,'<br>')}</div>
+      </div>`
+    : '';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'results-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:2900;background:rgba(13,13,15,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);overflow-y:auto;padding:32px 20px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;animation:results-fade 0.3s ease both';
+  overlay.innerHTML = `
+    <style>
+      @keyframes results-fade { from{opacity:0} to{opacity:1} }
+      @keyframes results-pop { 0%{transform:scale(0.92);opacity:0} 100%{transform:scale(1);opacity:1} }
+      @keyframes confetti-fall { 0%{transform:translateY(0) rotate(0deg);opacity:1} 100%{transform:translateY(110vh) rotate(720deg);opacity:0} }
+    </style>
+    ${confettiHTML}
+    <div style="max-width:480px;width:100%;text-align:center;animation:results-pop 0.4s cubic-bezier(0.34,1.56,0.64,1) both">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:8px">🏁 Week of ${esc(weekLabel)} wrapped</div>
+      <div style="font-size:52px;margin-bottom:4px">${isMyWin ? '🏆' : '🥇'}</div>
+      <div style="font-family:'Syne',sans-serif;font-size:26px;font-weight:800;color:${isMyWin ? 'var(--accent)' : 'var(--ink)'};line-height:1.1;margin-bottom:4px">${isMyWin ? 'You won!' : esc(winner) + ' won'}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:${sorted[0][1] >= 0 ? 'var(--green)' : 'var(--red)'};margin-bottom:24px">${fmt(sorted[0][1])}</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:left">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Final Standings</div>
+        ${sorted.map(([player, pnl], i) => {
+          const isMe = player === MY_NAME;
+          const pcolor = getPlayerColor(player);
+          const cls = pnl >= 0 ? 'green' : 'red';
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;${i < sorted.length - 1 ? 'border-bottom:1px solid var(--border)' : ''}">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);width:18px">#${i+1}</span>
+              <span style="width:10px;height:10px;border-radius:2px;background:${pcolor};flex-shrink:0"></span>
+              <span style="font-family:'Syne',sans-serif;font-weight:${isMe ? 700 : 500};color:${isMe ? 'var(--accent)' : 'var(--ink)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(player)}${isMe ? ' ★' : ''}</span>
+            </div>
+            <span class="${cls}" style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;margin-left:8px">${fmt(pnl)}</span>
+          </div>`;
+        }).join('')}
+      </div>
+      ${recapHtml}
+      <button id="results-continue-btn" style="margin-top:24px;font-family:'Syne',sans-serif;font-weight:700;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;padding:12px 32px;border-radius:6px;border:none;background:var(--accent);color:#0d0d0f;cursor:pointer">Continue to draft →</button>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  const dismiss = () => {
+    overlay.remove();
+    if (onDismiss) onDismiss();
+  };
+  overlay.querySelector('#results-continue-btn').addEventListener('click', dismiss);
+}
+
 function showWinnerCelebration() {
   if (_celebrationShown) return;
   _celebrationShown = true;
@@ -3155,6 +3259,7 @@ window.addEventListener('load', async () => {
     await seedPlayerColorOrder();
     loadWeek();
     loadHistory();
+    maybeShowWeekResultsPopup();
   }
   updatePushUiState();
   setupRealtime();
