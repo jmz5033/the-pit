@@ -3080,6 +3080,11 @@ function refreshOnFocus() {
   if (now - _lastFocusRefresh < 30000) return;
   _lastFocusRefresh = now;
   loadWeek();
+  // A close may have happened while the app was suspended (iOS PWA resume).
+  // The window.load listener already fired at launch time, so we also
+  // opportunistically check here — the popup itself is idempotent (per-week
+  // localStorage flag) so this can't double-show.
+  maybeShowWeekResultsPopup();
 }
 document.addEventListener('visibilitychange', refreshOnFocus);
 window.addEventListener('focus', refreshOnFocus);
@@ -3119,6 +3124,14 @@ function setupRealtime() {
     .on('postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'sdl_weeks' },
       (payload) => {
+        // Any week transitioning to 'closed' should trigger the results popup
+        // — the user is on the app when the close happens, so window.load
+        // won't re-fire. Runs regardless of which week we're currently viewing.
+        if (payload && payload.old && payload.new
+            && payload.old.status !== 'closed'
+            && payload.new.status === 'closed') {
+          maybeShowWeekResultsPopup();
+        }
         if (!payload || !payload.new || !WK || payload.new.id !== WK.id) return;
         onRealtimeWeekUpdate(payload.new);
       }
