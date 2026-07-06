@@ -1595,6 +1595,11 @@ async function snapshotPrices(type) {
   // numbers are settled and a retry won't change anything.
   const maxAttempts = type === 'open' ? 3 : 1;
   const prices = {};
+  // For 'open' we also side-load q.c into prices_live from the same batch —
+  // Finnhub returns o AND c in one response, so no reason to make refresh-
+  // LivePrices immediately re-fetch all 50+ tickers and trip the 60/min
+  // free-tier rate limit right at market open.
+  const liveSideload = {};
   let toFetch = [...tickers];
   for (let attempt = 0; attempt < maxAttempts && toFetch.length; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, 3000));
@@ -1613,15 +1618,26 @@ async function snapshotPrices(type) {
         if (v < q.l * 0.999 || v > q.h * 1.001) { stillMissing.push(t); continue; }
       }
       prices[t] = v;
+      if (type === 'open' && typeof q.c === 'number' && q.c > 0) {
+        liveSideload[t] = q.c;
+      }
     }
     toFetch = stillMissing;
   }
   const field = type === 'open' ? 'prices_open' : 'prices_close';
   const patch = { [field]: prices };
-  if (type === 'open') patch.status = 'live';
+  if (type === 'open') {
+    patch.status = 'live';
+    if (Object.keys(liveSideload).length) {
+      patch.prices_live = { ...(WK.prices_live || {}), ...liveSideload };
+    }
+  }
   await sb(`sdl_weeks?id=eq.${WK.id}`, 'PATCH', patch);
   WK[field] = prices;
-  if (type === 'open') WK.status = 'live';
+  if (type === 'open') {
+    WK.status = 'live';
+    if (patch.prices_live) WK.prices_live = patch.prices_live;
+  }
 }
 
 async function fetchLive(tickers) {
