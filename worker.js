@@ -356,8 +356,27 @@ function computeScores(rosters, open, live) {
 // so a pick on one of them silently registers no P&L for the whole week.
 // Yahoo's public chart endpoint covers them, so we fall through to it and
 // normalize the response into Finnhub's {c,o,h,l,pc} shape.
-async function fetchYahooQuote(symbol) {
-  const u = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
+const pos = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+const firstNum = (arr) => {
+  if (!Array.isArray(arr)) return null;
+  for (const v of arr) if (pos(v)) return v;
+  return null;
+};
+const maxNum = (arr) => {
+  if (!Array.isArray(arr)) return null;
+  let m = null;
+  for (const v of arr) if (pos(v) && (m === null || v > m)) m = v;
+  return m;
+};
+const minNum = (arr) => {
+  if (!Array.isArray(arr)) return null;
+  let m = null;
+  for (const v of arr) if (pos(v) && (m === null || v < m)) m = v;
+  return m;
+};
+
+async function yahooChart(symbol, params) {
+  const u = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?${params}`;
   const r = await fetch(u, {
     headers: {
       // Yahoo 403s requests with no UA.
@@ -367,34 +386,51 @@ async function fetchYahooQuote(symbol) {
   });
   if (!r.ok) return null;
   const d = await r.json();
-  const res = d?.chart?.result?.[0];
+  return d?.chart?.result?.[0] || null;
+}
+
+async function fetchYahooQuote(symbol) {
+  const res = await yahooChart(symbol, 'interval=1d&range=1d');
   if (!res) return null;
   const meta = res.meta || {};
+  const c = pos(meta.regularMarketPrice);
+  if (!c) return null;
+  const pc = pos(meta.chartPreviousClose) || pos(meta.previousClose);
+
   const bar = res.indicators?.quote?.[0] || {};
-  const firstNum = (arr) => {
-    if (!Array.isArray(arr)) return null;
-    for (const v of arr) if (typeof v === 'number' && v > 0) return v;
-    return null;
-  };
-  const c = typeof meta.regularMarketPrice === 'number' ? meta.regularMarketPrice : null;
-  if (!(c > 0)) return null;
-  const o = (typeof meta.regularMarketOpen === 'number' && meta.regularMarketOpen > 0)
-    ? meta.regularMarketOpen
-    : firstNum(bar.open);
-  const h = (typeof meta.regularMarketDayHigh === 'number' && meta.regularMarketDayHigh > 0)
-    ? meta.regularMarketDayHigh
-    : firstNum(bar.high);
-  const l = (typeof meta.regularMarketDayLow === 'number' && meta.regularMarketDayLow > 0)
-    ? meta.regularMarketDayLow
-    : firstNum(bar.low);
-  const pc = (typeof meta.chartPreviousClose === 'number' && meta.chartPreviousClose > 0)
-    ? meta.chartPreviousClose
-    : (typeof meta.previousClose === 'number' ? meta.previousClose : null);
+  let o = pos(meta.regularMarketOpen) || firstNum(bar.open);
+  let h = pos(meta.regularMarketDayHigh) || maxNum(bar.high);
+  let l = pos(meta.regularMarketDayLow) || minNum(bar.low);
+
+  // Thinly-traded names come back with a null daily bar and no day range in
+  // meta — SEB (Seaboard) trades a few hundred shares a day and hits this
+  // every time, which is why it got a live price but never an open. The
+  // 1-minute series still has the real prints, and with includePrePost=false
+  // its first bar is the true 9:30 regular-session open.
+  if (!o || !h || !l) {
+    const intra = await yahooChart(symbol, 'interval=1m&range=1d&includePrePost=false');
+    const iq = intra?.indicators?.quote?.[0];
+    if (iq) {
+      if (!o) o = firstNum(iq.open);
+      if (!h) h = maxNum(iq.high);
+      if (!l) l = minNum(iq.low);
+    }
+  }
+
   const q = { c, _src: 'yahoo' };
-  if (o) q.o = o;
+  if (pc) q.pc = pc;
   if (h) q.h = h;
   if (l) q.l = l;
-  if (pc) q.pc = pc;
+  if (o) {
+    q.o = o;
+    // The client only carries l/h to range-check the open, and it drops any
+    // open it can't range-check. Both come from the same session here, so if
+    // they disagree it's partial data rather than a stale tick — widen the
+    // range to keep a legitimate open instead of silently discarding it.
+    // o and c are both positive, so these always land on a usable range.
+    q.h = Math.max(h || 0, o, c);
+    q.l = Math.min(l || Infinity, o, c);
+  }
   return q;
 }
 
