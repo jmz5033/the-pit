@@ -966,15 +966,11 @@ export default {
     }
 
     if (url.pathname === '/api/fh-check' && request.method === 'GET') {
-      // Same-origin: diagnostic that bypasses the edge cache and returns the
-      // raw Finnhub response for one or more symbols (comma-separated).
-      // No admin key — the data is public quote info anyway; we just need to
-      // see what Finnhub is actually returning for a ticker that's failing.
+      // Open diagnostic: bypasses the edge cache and returns the raw Finnhub
+      // response for one or more symbols (comma-separated). No auth check —
+      // the data is public quote info anyway, and we need it to work from a
+      // pasted URL in the address bar (which sends no Origin/Referer).
       // Defaults to AAPL for backward compatibility with the old admin call.
-      const origin = request.headers.get('origin') || '';
-      const referer = request.headers.get('referer') || '';
-      const sameOrigin = origin === url.origin || referer.startsWith(url.origin + '/');
-      if (!sameOrigin) return json({ error: 'forbidden' }, 403);
       if (!env.FH_KEY) return json({ error: 'FH_KEY not set' }, 500);
       const symbolsParam = url.searchParams.get('symbols') || url.searchParams.get('symbol') || 'AAPL';
       const symbols = Array.from(new Set(
