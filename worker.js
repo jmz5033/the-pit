@@ -966,23 +966,33 @@ export default {
     }
 
     if (url.pathname === '/api/fh-check' && request.method === 'GET') {
-      // Admin-only: confirm FH_KEY env var actually authenticates with
-      // Finnhub. Returns the AAPL quote payload (or upstream status) so we
-      // can verify the worker can fetch quotes before relying on it at
-      // Friday 4 PM ET.
-      if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
-        return json({ error: 'forbidden' }, 403);
-      }
+      // Same-origin: diagnostic that bypasses the edge cache and returns the
+      // raw Finnhub response for one or more symbols (comma-separated).
+      // No admin key — the data is public quote info anyway; we just need to
+      // see what Finnhub is actually returning for a ticker that's failing.
+      // Defaults to AAPL for backward compatibility with the old admin call.
+      const origin = request.headers.get('origin') || '';
+      const referer = request.headers.get('referer') || '';
+      const sameOrigin = origin === url.origin || referer.startsWith(url.origin + '/');
+      if (!sameOrigin) return json({ error: 'forbidden' }, 403);
       if (!env.FH_KEY) return json({ error: 'FH_KEY not set' }, 500);
-      try {
-        const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=AAPL&token=${env.FH_KEY}`);
-        const body = await r.text();
-        let parsed = null;
-        try { parsed = JSON.parse(body); } catch {}
-        return json({ status: r.status, ok: r.ok, body: parsed || body.slice(0, 200), fhKeyLen: env.FH_KEY.length });
-      } catch (e) {
-        return json({ error: e.message || String(e) }, 500);
+      const symbolsParam = url.searchParams.get('symbols') || url.searchParams.get('symbol') || 'AAPL';
+      const symbols = Array.from(new Set(
+        symbolsParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+      )).slice(0, 20);
+      const results = {};
+      for (const t of symbols) {
+        try {
+          const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${env.FH_KEY}`);
+          const body = await r.text();
+          let parsed = null;
+          try { parsed = JSON.parse(body); } catch {}
+          results[t] = { status: r.status, body: parsed || body.slice(0, 200) };
+        } catch (e) {
+          results[t] = { error: e.message || String(e) };
+        }
       }
+      return json({ fhKeyLen: env.FH_KEY.length, results });
     }
 
     if (url.pathname === '/api/friday-close' && request.method === 'POST') {
