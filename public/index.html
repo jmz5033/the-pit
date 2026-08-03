@@ -806,8 +806,23 @@ async function fhSearch(q) {
   return validations.filter(Boolean).slice(0, 5);
 }
 async function getQuotesBatch(tickers) {
+  // Route through the worker so all users share one Finnhub call per ticker
+  // per 60s edge-cache window. Hitting Finnhub directly (35 tickers × N users)
+  // was blowing past the 60/min free-tier limit at market open and silently
+  // freezing live prices for the rest of the day.
   const out = {};
-  await Promise.all(tickers.map(async t => { try { out[t] = await fhQuote(t); } catch { out[t] = null; } }));
+  if (!tickers || !tickers.length) return out;
+  const uniq = Array.from(new Set(tickers.map((s) => String(s).toUpperCase())));
+  try {
+    const r = await fetch(`/api/quotes?symbols=${encodeURIComponent(uniq.join(','))}`, { credentials: 'omit' });
+    if (r.ok) {
+      const data = await r.json().catch(() => ({}));
+      for (const t of uniq) out[t] = data[t] || null;
+      return out;
+    }
+  } catch {}
+  // Fallback to direct Finnhub if the worker proxy is unreachable (dev/local).
+  await Promise.all(uniq.map(async (t) => { try { out[t] = await fhQuote(t); } catch { out[t] = null; } }));
   return out;
 }
 

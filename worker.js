@@ -909,6 +909,55 @@ export default {
       }
     }
 
+    if (url.pathname === '/api/quotes' && request.method === 'GET') {
+      // Public: batch quote fetch, proxied through the worker with a shared
+      // edge cache. Client was hitting Finnhub directly (35 tickers × N users
+      // per minute), which blew past the 60/min free-tier limit when everyone
+      // opened the app at market open — refresh silently no-op'd for the rest
+      // of the day. Now all users share ONE Finnhub call per ticker per cache
+      // window regardless of how many are refreshing.
+      // GET fetches from the same origin often omit the Origin header, so
+      // fall back to matching Referer against our origin.
+      const origin = request.headers.get('origin') || '';
+      const referer = request.headers.get('referer') || '';
+      const ok = origin === url.origin || referer.startsWith(url.origin + '/');
+      if (!ok) return json({ error: 'forbidden' }, 403);
+      if (!env.FH_KEY) return json({ error: 'FH_KEY not set' }, 500);
+      const symbolsParam = url.searchParams.get('symbols') || '';
+      const symbols = Array.from(new Set(
+        symbolsParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+      )).slice(0, 100);
+      if (!symbols.length) return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      });
+      const cache = caches.default;
+      const out = {};
+      await Promise.all(symbols.map(async (t) => {
+        const cacheKey = new Request(`https://the-pit-cache/finnhub/quote?symbol=${encodeURIComponent(t)}`);
+        const hit = await cache.match(cacheKey);
+        if (hit) {
+          const data = await hit.json().catch(() => null);
+          if (data) { out[t] = data; return; }
+        }
+        try {
+          const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${env.FH_KEY}`);
+          if (!r.ok) return;
+          const d = await r.json();
+          if (!d || typeof d.c !== 'number') return;
+          out[t] = d;
+          const respToCache = new Response(JSON.stringify(d), {
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' },
+          });
+          await cache.put(cacheKey, respToCache);
+        } catch {}
+      }));
+      return new Response(JSON.stringify(out), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      });
+    }
+
     if (url.pathname === '/api/fh-check' && request.method === 'GET') {
       // Admin-only: confirm FH_KEY env var actually authenticates with
       // Finnhub. Returns the AAPL quote payload (or upstream status) so we
