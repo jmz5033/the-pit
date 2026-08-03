@@ -946,10 +946,17 @@ export default {
           const d = await r.json();
           if (!d || typeof d.c !== 'number') return;
           out[t] = d;
-          const respToCache = new Response(JSON.stringify(d), {
-            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' },
-          });
-          await cache.put(cacheKey, respToCache);
+          // Only cache real quotes. Finnhub occasionally returns c:0 for a
+          // ticker that hasn't traded yet (right at 9:30 open, or lightly-
+          // traded names). Caching zero for 60s would defeat the client's
+          // 3-attempt retry loop in snapshotPrices('open') and freeze that
+          // ticker at "no open" for the rest of the day.
+          if (d.c > 0) {
+            const respToCache = new Response(JSON.stringify(d), {
+              headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' },
+            });
+            await cache.put(cacheKey, respToCache);
+          }
         } catch {}
       }));
       return new Response(JSON.stringify(out), {
