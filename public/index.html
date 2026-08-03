@@ -760,12 +760,17 @@ const _quotableCache = new Map();
 async function isQuotable(sym) {
   if (_quotableCache.has(sym)) return _quotableCache.get(sym);
   try {
-    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${FH_KEY}`);
+    // Goes through the worker so this check sees the same Yahoo fallback the
+    // live-price path uses. Checking Finnhub directly would hide legitimately
+    // tradeable names Finnhub's free tier doesn't cover (NAVI, BWXT, SEB) —
+    // exactly the tickers that then register no P&L all week.
+    const r = await fetch(`/api/quotes?symbols=${encodeURIComponent(sym)}`);
     // Rate-limit / transient errors: don't cache, let the candidate through —
     // a later add-pick attempt will re-validate. Better to risk one user
     // adding an untradeable ticker than to silently hide a real one.
     if (!r.ok) return true;
-    const q = await r.json();
+    const data = await r.json();
+    const q = data && data[String(sym).toUpperCase()];
     const ok = !!(q && typeof q.c === 'number' && q.c > 0);
     _quotableCache.set(sym, ok);
     return ok;

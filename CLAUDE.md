@@ -26,6 +26,36 @@ Practical implications when writing worker code:
   All 4 PM ET logic is guarded with `etMinute === 0` so it doesn't double-fire
   at 16:30.
 
+## Quotes: worker-proxied, Finnhub → Yahoo fallback
+
+All price fetching goes through **`/api/quotes?symbols=A,B,C`** on the worker.
+The client no longer calls Finnhub directly for prices.
+
+- **Why proxied**: the client used to fetch Finnhub per-ticker from every
+  browser. ~35 tickers × N users refreshing blew past Finnhub's free-tier
+  60/min limit at market open, and `getQuotesBatch` swallows errors — so live
+  prices silently froze for the rest of the day. The worker caches each ticker
+  at the Cloudflare edge for **60s**, so N users share one upstream call.
+- **Never cache `c:0`.** Finnhub returns `c:0` for a ticker that hasn't printed
+  yet at 9:30. Caching that defeats `snapshotPrices('open')`'s 3-attempt retry
+  loop and freezes the ticker at "no open" all week.
+- **Yahoo fallback**: Finnhub's free tier doesn't cover every US listing —
+  NAVI, BWXT and SEB are all legitimately NYSE/NASDAQ-traded but return empty
+  or zero every time. `fetchQuote(env, symbol)` tries Finnhub, then falls
+  through to Yahoo's `v8/finance/chart` endpoint, normalizing to Finnhub's
+  `{c,o,h,l,pc}` shape. Yahoo 403s without a `User-Agent` header. Responses
+  carry `_src: 'finnhub'|'yahoo'` for debugging.
+- `fetchQuote` is used by **both** `/api/quotes` and `snapshotClosePrices`,
+  so the Friday close gets the same coverage as live prices.
+- The draft dropdown's `isQuotable` check also routes through `/api/quotes` —
+  checking Finnhub directly would hide exactly the tickers that then register
+  no P&L all week.
+- **`/api/fh-check?symbols=A,B,C`** is an open (no-auth) diagnostic that
+  bypasses the cache and returns Finnhub's raw response, Yahoo's raw response,
+  and the `resolved` quote for each symbol. No auth because it must work from
+  a pasted address-bar URL (which sends no `Origin`/`Referer`), and it only
+  returns public quote data.
+
 ## Worker secrets currently expected
 
 | Secret | Used by |

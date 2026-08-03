@@ -350,6 +350,79 @@ function computeScores(rosters, open, live) {
   return scores;
 }
 
+// ─── QUOTES (Finnhub primary, Yahoo fallback) ────────────────────────────────
+// Finnhub's free tier doesn't cover every US listing. NAVI, BWXT and SEB are
+// all legitimately NYSE/NASDAQ-traded but come back empty or zero every time,
+// so a pick on one of them silently registers no P&L for the whole week.
+// Yahoo's public chart endpoint covers them, so we fall through to it and
+// normalize the response into Finnhub's {c,o,h,l,pc} shape.
+async function fetchYahooQuote(symbol) {
+  const u = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
+  const r = await fetch(u, {
+    headers: {
+      // Yahoo 403s requests with no UA.
+      'User-Agent': 'Mozilla/5.0 (compatible; ThePit/1.0)',
+      'Accept': 'application/json',
+    },
+  });
+  if (!r.ok) return null;
+  const d = await r.json();
+  const res = d?.chart?.result?.[0];
+  if (!res) return null;
+  const meta = res.meta || {};
+  const bar = res.indicators?.quote?.[0] || {};
+  const firstNum = (arr) => {
+    if (!Array.isArray(arr)) return null;
+    for (const v of arr) if (typeof v === 'number' && v > 0) return v;
+    return null;
+  };
+  const c = typeof meta.regularMarketPrice === 'number' ? meta.regularMarketPrice : null;
+  if (!(c > 0)) return null;
+  const o = (typeof meta.regularMarketOpen === 'number' && meta.regularMarketOpen > 0)
+    ? meta.regularMarketOpen
+    : firstNum(bar.open);
+  const h = (typeof meta.regularMarketDayHigh === 'number' && meta.regularMarketDayHigh > 0)
+    ? meta.regularMarketDayHigh
+    : firstNum(bar.high);
+  const l = (typeof meta.regularMarketDayLow === 'number' && meta.regularMarketDayLow > 0)
+    ? meta.regularMarketDayLow
+    : firstNum(bar.low);
+  const pc = (typeof meta.chartPreviousClose === 'number' && meta.chartPreviousClose > 0)
+    ? meta.chartPreviousClose
+    : (typeof meta.previousClose === 'number' ? meta.previousClose : null);
+  const q = { c, _src: 'yahoo' };
+  if (o) q.o = o;
+  if (h) q.h = h;
+  if (l) q.l = l;
+  if (pc) q.pc = pc;
+  return q;
+}
+
+// Returns a Finnhub-shaped quote, or null if neither provider has one.
+// A Finnhub response with c:0 is treated as a miss so Yahoo gets a shot, but
+// it's still returned as a last resort if Yahoo has nothing either — that
+// preserves the pre-fallback behaviour rather than turning a zero into a null.
+async function fetchQuote(env, symbol) {
+  let finnhubZero = null;
+  if (env.FH_KEY) {
+    try {
+      const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${env.FH_KEY}`);
+      if (r.ok) {
+        const d = await r.json();
+        if (d && typeof d.c === 'number') {
+          if (d.c > 0) return { ...d, _src: 'finnhub' };
+          finnhubZero = { ...d, _src: 'finnhub' };
+        }
+      }
+    } catch {}
+  }
+  try {
+    const y = await fetchYahooQuote(symbol);
+    if (y) return y;
+  } catch {}
+  return finnhubZero;
+}
+
 async function snapshotClosePrices(env, week) {
   if (!env.FH_KEY) throw new Error('FH_KEY not configured');
   const tickers = new Set();
@@ -360,9 +433,7 @@ async function snapshotClosePrices(env, week) {
   // Sequential to stay polite to Finnhub's free-tier rate limit
   for (const t of tickers) {
     try {
-      const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${env.FH_KEY}`);
-      if (!r.ok) continue;
-      const d = await r.json();
+      const d = await fetchQuote(env, t);
       if (d && typeof d.c === 'number' && d.c > 0) prices[t] = d.c;
     } catch {}
   }
@@ -941,9 +1012,7 @@ export default {
           if (data) { out[t] = data; return; }
         }
         try {
-          const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${env.FH_KEY}`);
-          if (!r.ok) return;
-          const d = await r.json();
+          const d = await fetchQuote(env, t);
           if (!d || typeof d.c !== 'number') return;
           out[t] = d;
           // Only cache real quotes. Finnhub occasionally returns c:0 for a
@@ -978,15 +1047,28 @@ export default {
       )).slice(0, 20);
       const results = {};
       for (const t of symbols) {
+        const entry = {};
         try {
           const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${env.FH_KEY}`);
           const body = await r.text();
           let parsed = null;
           try { parsed = JSON.parse(body); } catch {}
-          results[t] = { status: r.status, body: parsed || body.slice(0, 200) };
+          entry.finnhub = { status: r.status, body: parsed || body.slice(0, 200) };
         } catch (e) {
-          results[t] = { error: e.message || String(e) };
+          entry.finnhub = { error: e.message || String(e) };
         }
+        try {
+          entry.yahoo = (await fetchYahooQuote(t)) || { note: 'no quote' };
+        } catch (e) {
+          entry.yahoo = { error: e.message || String(e) };
+        }
+        // What the app would actually end up using for this symbol.
+        try {
+          entry.resolved = (await fetchQuote(env, t)) || { note: 'no quote from either provider' };
+        } catch (e) {
+          entry.resolved = { error: e.message || String(e) };
+        }
+        results[t] = entry;
       }
       return json({ fhKeyLen: env.FH_KEY.length, results });
     }
