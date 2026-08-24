@@ -53,6 +53,15 @@ The client no longer calls Finnhub directly for prices.
   theoretical one. If the open isn't inside today's range, refetch the
   1-minute series; if that fails too, emit **no** open rather than a wrong
   cost basis.
+- **Finnhub circuit breaker**: the free tier is 60 req/min and one refresh
+  covers ~66 tickers, so under real usage nearly every call returns 429 and
+  falls through to Yahoo anyway — burning a subrequest and a round-trip per
+  ticker. On seeing a 429, `markFinnhubRateLimited()` records it at the edge
+  for **5 min** and `fetchQuote` skips straight to Yahoo until it lapses.
+  Pass a shared `newQuoteBatchState()` when fetching more than one symbol so
+  one 429 spares the rest of the batch. The Cache API is per-colo, so each
+  location learns independently. `/api/fh-check` reports `finnhubBreakerOpen`
+  but its raw `finnhub` probe deliberately bypasses the breaker.
 - `fetchQuote` is used by **both** `/api/quotes` and `snapshotClosePrices`,
   so the Friday close gets the same coverage as live prices.
 - `/api/open-sweep` also routes through `fetchQuote` and accepts

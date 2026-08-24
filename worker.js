@@ -441,16 +441,52 @@ async function fetchYahooQuote(symbol) {
   return q;
 }
 
+// ─── FINNHUB CIRCUIT BREAKER ─────────────────────────────────────────────────
+// The free tier allows 60 req/min. A single refresh covers ~66 tickers, so with
+// any real usage we sit permanently over the limit: nearly every call returns
+// 429 and falls through to Yahoo anyway, having burned a subrequest and a full
+// round-trip for nothing. Once we've seen a 429, remember it at the edge and go
+// straight to Yahoo until it expires.
+//
+// The Cache API is per-colo, so each location learns independently — the cost
+// of learning is one wasted call per colo per window, which is the point.
+const FH_BREAKER_URL = 'https://the-pit-cache/finnhub/rate-limited';
+const FH_BREAKER_SECONDS = 300;
+
+async function finnhubRateLimited() {
+  try {
+    return !!(await caches.default.match(new Request(FH_BREAKER_URL)));
+  } catch { return false; }
+}
+
+async function markFinnhubRateLimited() {
+  try {
+    await caches.default.put(new Request(FH_BREAKER_URL), new Response('1', {
+      headers: { 'Cache-Control': `public, max-age=${FH_BREAKER_SECONDS}` },
+    }));
+  } catch {}
+}
+
+// Shared across one batch so a 429 on the first ticker spares the other 65.
+// Callers that fetch more than one symbol should create this once and pass it.
+async function newQuoteBatchState() {
+  return { fhDown: await finnhubRateLimited() };
+}
+
 // Returns a Finnhub-shaped quote, or null if neither provider has one.
 // A Finnhub response with c:0 is treated as a miss so Yahoo gets a shot, but
 // it's still returned as a last resort if Yahoo has nothing either — that
 // preserves the pre-fallback behaviour rather than turning a zero into a null.
-async function fetchQuote(env, symbol) {
+async function fetchQuote(env, symbol, state) {
   let finnhubZero = null;
-  if (env.FH_KEY) {
+  const skipFinnhub = state ? state.fhDown : await finnhubRateLimited();
+  if (env.FH_KEY && !skipFinnhub) {
     try {
       const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${env.FH_KEY}`);
-      if (r.ok) {
+      if (r.status === 429) {
+        if (state) state.fhDown = true;
+        await markFinnhubRateLimited();
+      } else if (r.ok) {
         const d = await r.json();
         if (d && typeof d.c === 'number') {
           if (d.c > 0) return { ...d, _src: 'finnhub' };
@@ -474,9 +510,10 @@ async function snapshotClosePrices(env, week) {
   }
   const prices = {};
   // Sequential to stay polite to Finnhub's free-tier rate limit
+  const state = await newQuoteBatchState();
   for (const t of tickers) {
     try {
-      const d = await fetchQuote(env, t);
+      const d = await fetchQuote(env, t, state);
       if (d && typeof d.c === 'number' && d.c > 0) prices[t] = d.c;
     } catch {}
   }
@@ -1047,6 +1084,7 @@ export default {
       });
       const cache = caches.default;
       const out = {};
+      const state = await newQuoteBatchState();
       await Promise.all(symbols.map(async (t) => {
         const cacheKey = new Request(`https://the-pit-cache/finnhub/quote?symbol=${encodeURIComponent(t)}`);
         const hit = await cache.match(cacheKey);
@@ -1055,7 +1093,7 @@ export default {
           if (data) { out[t] = data; return; }
         }
         try {
-          const d = await fetchQuote(env, t);
+          const d = await fetchQuote(env, t, state);
           if (!d || typeof d.c !== 'number') return;
           out[t] = d;
           // Only cache real quotes. Finnhub occasionally returns c:0 for a
@@ -1113,7 +1151,14 @@ export default {
         }
         results[t] = entry;
       }
-      return json({ fhKeyLen: env.FH_KEY.length, results });
+      // The raw finnhub probe above deliberately bypasses the breaker so this
+      // stays a true diagnostic; this flag reports whether the app itself is
+      // currently skipping Finnhub.
+      return json({
+        fhKeyLen: env.FH_KEY.length,
+        finnhubBreakerOpen: await finnhubRateLimited(),
+        results,
+      });
     }
 
     if (url.pathname === '/api/friday-close' && request.method === 'POST') {
@@ -1180,16 +1225,19 @@ export default {
       if (!tickers.length) return json({ note: 'no opens to sweep', checked: 0 });
 
       // 1.1s between quote calls keeps us comfortably under Finnhub's 60/min
-      // free-tier limit even if the worker shares budget with other calls.
+      // free-tier limit. When the breaker is open we're only talking to Yahoo,
+      // which has no such limit — pacing at 1.1s there would just make a
+      // 66-ticker sweep take over a minute for no reason.
       const patched = {}, suspiciousLog = [], errors = [];
+      const state = await newQuoteBatchState();
       for (const t of tickers) {
-        await new Promise((r) => setTimeout(r, 1100));
+        await new Promise((r) => setTimeout(r, state.fhDown ? 150 : 1100));
         try {
           // Goes through fetchQuote so the sweep sees the Yahoo fallback too.
           // Hitting Finnhub directly skipped every ticker Finnhub doesn't
           // cover — exactly the ones whose opens come from Yahoo and so are
           // the ones most likely to need repairing.
-          const d = await fetchQuote(env, t);
+          const d = await fetchQuote(env, t, state);
           if (!d) { errors.push({ t, err: 'no quote' }); continue; }
           if (!(d.l > 0) || !(d.h > 0)) continue;
           const stored = Number(opens[t]);
