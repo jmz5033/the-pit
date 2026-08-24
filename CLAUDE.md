@@ -61,6 +61,21 @@ The client no longer calls Finnhub directly for prices.
 - The draft dropdown's `isQuotable` check also routes through `/api/quotes` —
   checking Finnhub directly would hide exactly the tickers that then register
   no P&L all week.
+
+## Draftability guard
+
+`isQuotable` is enforced inside **`addPick`**, not at the call sites. Every
+entry path (dropdown selection, typed ticker via `addBySearch`, seed
+suggestion via `addFromSeed`) funnels through it, so a new caller can't
+bypass the rule. `addPick` is `async` and returns `true` only if the pick was
+added — callers must `await` it.
+
+The rule is `c >= MIN_PICK_PRICE` ($1.00) **and** not an OTC/pink venue
+(`_exch` from Yahoo's `fullExchangeName`). A bare `c > 0` existence test is
+not sufficient: SECI (Sector 10, Inc.) trades OTC at ~$0.0001 with a ~$30
+market cap and returns a perfectly valid non-zero quote, so it passed the
+old check and then contributed nothing all week. At that price an allocation
+buys tens of millions of shares and one $0.0001 tick swings P&L 100%.
 - **`/api/fh-check?symbols=A,B,C`** is an open (no-auth) diagnostic that
   bypasses the cache and returns Finnhub's raw response, Yahoo's raw response,
   and the `resolved` quote for each symbol. No auth because it must work from

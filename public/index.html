@@ -753,7 +753,18 @@ async function fhProfile(t) {
   const d = await r.json();
   return d && d.name ? d : null;
 }
-// Cache of ticker → boolean (true = Finnhub returned a non-zero current price).
+// Minimum share price for a draftable pick. `c > 0` isn't a real tradability
+// test: SECI (Sector 10, Inc.) trades OTC at ~$0.0001 with a ~$30 market cap
+// and returns a perfectly valid non-zero quote, so it sailed into the dropdown
+// and then contributed nothing all week. At that price an allocation buys tens
+// of millions of shares and one tick of $0.0001 swings P&L by 100% — that's a
+// rounding error with leverage, not a stock pick. NYSE and NASDAQ both start
+// delisting below $1, so it's a defensible line.
+const MIN_PICK_PRICE = 1.00;
+// Yahoo's exchange label for pink-sheet / OTC venues.
+const OTC_EXCHANGE_RE = /pink|otc|expert market|pnk/i;
+
+// Cache of ticker → boolean (true = quotable AND draftable).
 // Populated lazily during search; prevents re-validating the same symbol on
 // every keystroke. Lives for the page session only.
 const _quotableCache = new Map();
@@ -771,7 +782,8 @@ async function isQuotable(sym) {
     if (!r.ok) return true;
     const data = await r.json();
     const q = data && data[String(sym).toUpperCase()];
-    const ok = !!(q && typeof q.c === 'number' && q.c > 0);
+    const ok = !!(q && typeof q.c === 'number' && q.c >= MIN_PICK_PRICE
+      && !(q._exch && OTC_EXCHANGE_RE.test(q._exch)));
     _quotableCache.set(sym, ok);
     return ok;
   } catch { return true; }
@@ -2168,22 +2180,23 @@ async function addBySearch() {
   inp.disabled = true; inp.placeholder = 'Looking up…';
   try {
     const profile = await fhProfile(query);
-    let name = '', sector = '';
+    let sym = '', name = '', sector = '';
     if (profile && profile.ticker && isUSSymbol(profile.ticker)) {
+      sym = profile.ticker;
       name = profile.name || query;
       sector = profile.finnhubIndustry || 'Other';
-      addPick(profile.ticker, name, sector);
     } else {
       const results = await fhSearch(query);
       if (!results.length) { alert(`No US-listed stock found for "${query}".`); return; }
       const best = results[0];
-      const sym = best.displaySymbol || best.symbol;
+      sym = best.displaySymbol || best.symbol;
       const prof = await fhProfile(sym);
       name = prof?.name || best.description || sym;
       sector = prof?.finnhubIndustry || 'Other';
-      addPick(sym, name, sector);
     }
-    inp.value = '';
+    // addPick enforces tradability. Keep whatever was typed on rejection so
+    // the player can edit it rather than retyping from scratch.
+    if (await addPick(sym, name, sector)) inp.value = '';
   } catch(e) { alert('Error: ' + e.message); }
   finally { inp.disabled = false; inp.placeholder = 'Ticker or company name…'; }
 }
@@ -2244,7 +2257,7 @@ async function pickSuggest(i) {
     const prof = await fhProfile(sym);
     const name = prof?.name || r.description || sym;
     const sector = prof?.finnhubIndustry || 'Other';
-    addPick(sym, name, sector);
+    await addPick(sym, name, sector);
   } catch(e) { showToast('Lookup failed: ' + e.message, 'error'); }
 }
 
@@ -2289,12 +2302,22 @@ async function addFromSeed(ticker) {
       WK.sector_cache = newCache;
     } catch { sector = 'Other'; name = ticker; }
   } else { name = ticker; }
-  addPick(ticker, name, sector);
+  await addPick(ticker, name, sector);
 }
 
-function addPick(ticker, name, sector) {
-  if (draftPicks.find(p=>p.ticker===ticker)) { showToast(`${ticker} already in your picks`, 'error'); return; }
-  if (draftPicks.length >= MAX_PICKS) { showToast('Max 10 picks reached', 'error'); return; }
+// Returns true if the pick was actually added.
+async function addPick(ticker, name, sector) {
+  if (draftPicks.find(p=>p.ticker===ticker)) { showToast(`${ticker} already in your picks`, 'error'); return false; }
+  if (draftPicks.length >= MAX_PICKS) { showToast('Max 10 picks reached', 'error'); return false; }
+  // Single choke point for tradability. Every entry path — dropdown, typed
+  // ticker, seed suggestion — lands here, so the rule can't be bypassed by a
+  // caller that forgets to check. It was previously enforced only on the
+  // dropdown, which is how SECI (OTC, ~$0.0001/share) got drafted by typing
+  // it in directly. Repeat lookups are free via _quotableCache.
+  if (!(await isQuotable(ticker))) {
+    showToast(`${ticker} isn't draftable — under $${MIN_PICK_PRICE.toFixed(2)} a share or an OTC listing.`, 'error', 4500);
+    return false;
+  }
   const totalSoFar = draftPicks.reduce((s,p)=>s+p.allocation,0);
   const remaining = BUDGET - totalSoFar;
   const slotsLeft = MAX_PICKS - draftPicks.length;
@@ -2304,6 +2327,7 @@ function addPick(ticker, name, sector) {
   showToast(`${ticker} added`, 'success', 1800);
   scheduleDraftSave();
   renderDraftPane();
+  return true;
 }
 
 function removePick(idx) { draftPicks.splice(idx, 1); scheduleDraftSave(); renderDraftPane(); }

@@ -426,6 +426,10 @@ async function fetchYahooQuote(symbol) {
   }
 
   const q = { c, _src: 'yahoo' };
+  // Carried so the draft check can reject OTC/pink-sheet venues. Yahoo already
+  // gives us this in the response we're fetching, so it costs nothing extra.
+  const exch = meta.fullExchangeName || meta.exchangeName;
+  if (exch) q._exch = String(exch);
   if (pc) q.pc = pc;
   if (h) q.h = h;
   if (l) q.l = l;
