@@ -45,8 +45,19 @@ The client no longer calls Finnhub directly for prices.
   through to Yahoo's `v8/finance/chart` endpoint, normalizing to Finnhub's
   `{c,o,h,l,pc}` shape. Yahoo 403s without a `User-Agent` header. Responses
   carry `_src: 'finnhub'|'yahoo'` for debugging.
+- **Never widen `l`/`h` to fit `o`.** The client carries the day range purely
+  to range-check the open (`index.html:1394`), so widening it to bracket a
+  suspect open silently disables the stale-open guard — a previous-session
+  open then sails straight through. Yahoo's `range=1d` sometimes returns the
+  *previous* session's daily bar, so this is a live failure mode, not a
+  theoretical one. If the open isn't inside today's range, refetch the
+  1-minute series; if that fails too, emit **no** open rather than a wrong
+  cost basis.
 - `fetchQuote` is used by **both** `/api/quotes` and `snapshotClosePrices`,
   so the Friday close gets the same coverage as live prices.
+- `/api/open-sweep` also routes through `fetchQuote` and accepts
+  `?symbols=A,B` to repair specific tickers without walking the whole roster
+  (it sleeps 1.1s per ticker for Finnhub's rate limit).
 - The draft dropdown's `isQuotable` check also routes through `/api/quotes` —
   checking Finnhub directly would hide exactly the tickers that then register
   no P&L all week.

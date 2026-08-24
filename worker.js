@@ -397,21 +397,29 @@ async function fetchYahooQuote(symbol) {
   if (!c) return null;
   const pc = pos(meta.chartPreviousClose) || pos(meta.previousClose);
 
+  // meta's day high/low describe the CURRENT session, so treat them as the
+  // authoritative range and never widen them to fit a suspect open.
+  let h = pos(meta.regularMarketDayHigh);
+  let l = pos(meta.regularMarketDayLow);
   const bar = res.indicators?.quote?.[0] || {};
   let o = pos(meta.regularMarketOpen) || firstNum(bar.open);
-  let h = pos(meta.regularMarketDayHigh) || maxNum(bar.high);
-  let l = pos(meta.regularMarketDayLow) || minNum(bar.low);
 
-  // Thinly-traded names come back with a null daily bar and no day range in
-  // meta — SEB (Seaboard) trades a few hundred shares a day and hits this
-  // every time, which is why it got a live price but never an open. The
-  // 1-minute series still has the real prints, and with includePrePost=false
-  // its first bar is the true 9:30 regular-session open.
-  if (!o || !h || !l) {
+  const outsideRange = (v) => (h && l) ? (v < l * 0.999 || v > h * 1.001) : false;
+
+  // Two ways the daily bar lets us down:
+  //   - Thinly-traded names (SEB) come back with a null bar and no meta range,
+  //     so there's no open at all.
+  //   - range=1d can hand back the PREVIOUS session's bar, so the open it
+  //     carries belongs to yesterday. That's a stale open, and it's what the
+  //     client's range guard exists to catch.
+  // The 1-minute series settles both: with includePrePost=false its first bar
+  // is unambiguously today's 9:30 regular-session print.
+  if (!o || !h || !l || outsideRange(o)) {
     const intra = await yahooChart(symbol, 'interval=1m&range=1d&includePrePost=false');
     const iq = intra?.indicators?.quote?.[0];
     if (iq) {
-      if (!o) o = firstNum(iq.open);
+      const io = firstNum(iq.open);
+      if (io) o = io;
       if (!h) h = maxNum(iq.high);
       if (!l) l = minNum(iq.low);
     }
@@ -421,16 +429,11 @@ async function fetchYahooQuote(symbol) {
   if (pc) q.pc = pc;
   if (h) q.h = h;
   if (l) q.l = l;
-  if (o) {
-    q.o = o;
-    // The client only carries l/h to range-check the open, and it drops any
-    // open it can't range-check. Both come from the same session here, so if
-    // they disagree it's partial data rather than a stale tick — widen the
-    // range to keep a legitimate open instead of silently discarding it.
-    // o and c are both positive, so these always land on a usable range.
-    q.h = Math.max(h || 0, o, c);
-    q.l = Math.min(l || Infinity, o, c);
-  }
+  // Only publish an open today's range actually contains. Widening the range
+  // to fit the open (as this used to do) defeats the client's stale-open
+  // guard entirely — a previous-session open would sail straight through.
+  // Better to report no open than a confident wrong cost basis.
+  if (o && h && l && !outsideRange(o)) q.o = o;
   return q;
 }
 
@@ -1165,18 +1168,25 @@ export default {
       if (!weeks || !weeks.length) return json({ error: 'no live week' }, 404);
       const week = weeks[0];
       const opens = week.prices_open || {};
-      const tickers = Object.keys(opens);
+      // ?symbols=A,B narrows the sweep to specific tickers — repairing one
+      // known-bad open shouldn't mean waiting out the whole roster.
+      const onlyParam = url.searchParams.get('symbols') || '';
+      const only = new Set(onlyParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
+      const tickers = Object.keys(opens).filter((t) => !only.size || only.has(t.toUpperCase()));
       if (!tickers.length) return json({ note: 'no opens to sweep', checked: 0 });
 
-      // 1.1s between Finnhub calls keeps us comfortably under the 60/min
+      // 1.1s between quote calls keeps us comfortably under Finnhub's 60/min
       // free-tier limit even if the worker shares budget with other calls.
       const patched = {}, suspiciousLog = [], errors = [];
       for (const t of tickers) {
         await new Promise((r) => setTimeout(r, 1100));
         try {
-          const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${env.FH_KEY}`);
-          if (!r.ok) { errors.push({ t, status: r.status }); continue; }
-          const d = await r.json();
+          // Goes through fetchQuote so the sweep sees the Yahoo fallback too.
+          // Hitting Finnhub directly skipped every ticker Finnhub doesn't
+          // cover — exactly the ones whose opens come from Yahoo and so are
+          // the ones most likely to need repairing.
+          const d = await fetchQuote(env, t);
+          if (!d) { errors.push({ t, err: 'no quote' }); continue; }
           if (!(d.l > 0) || !(d.h > 0)) continue;
           const stored = Number(opens[t]);
           if (!Number.isFinite(stored)) continue;
