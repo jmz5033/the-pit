@@ -104,9 +104,18 @@ selected as it dwarfs the rest).
 |---|---|---|
 | Your bench | your own past picks | times drafted, then recency |
 | The field | everyone else's picks | distinct owners, then total |
+| Follow | static `FOLLOW_PORTFOLIOS` | as listed |
 | Earnings | `/api/earnings` (lazy) | date, then symbol |
 | Winners | open→close per week | best average week |
 | Random | static `SEED_POOL` | shuffled |
+
+*Follow* is the one tab with a second selector: a `follow-pill` row picks the
+investor (`followWho`), and the blurb line becomes that investor's tagline.
+Holdings are **hand-maintained and approximate** — 13F filings are quarterly
+and land ~45 days after quarter close, so even an API-driven version would be
+months stale, which isn't worth wiring up for a beer game. Refresh
+`FOLLOW_PORTFOLIOS` whenever it starts feeling dated. The persona is the
+feature, not the precision.
 
 Why these: across 21 weeks ~4 of every 10 picks are a name that player has
 drafted before, but only ~1.7 carry over from the immediately previous week —

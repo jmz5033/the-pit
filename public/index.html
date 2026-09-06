@@ -150,6 +150,10 @@ input:focus { border-color: var(--accent); }
 .seed-tab:hover { color: var(--muted2); border-color: var(--border); }
 .seed-tab.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
 .seed-empty { font-size: 11px; color: var(--muted); padding: 10px 0; }
+.follow-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.follow-pill { font-size: 11px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border2); background: transparent; color: var(--muted); cursor: pointer; transition: all 0.12s; }
+.follow-pill:hover { color: var(--muted2); border-color: var(--border); }
+.follow-pill.active { color: var(--bg); border-color: var(--accent); background: var(--accent); font-weight: 700; }
 .seed-chip-meta { display: block; font-size: 9px; font-weight: 400; color: var(--muted); margin-top: 1px; }
 .seed-chip { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 5px; border: 1px solid var(--border2); background: var(--surface2); color: var(--muted2); cursor: pointer; transition: all 0.12s; text-align: center; }
 .seed-chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
@@ -697,6 +701,45 @@ const AI_PROXY_URL = '/api/recap';
 const SEED_POOL = ['NVDA','MSFT','AAPL','META','AVGO','AMZN','GOOGL','TSLA','AMD','TSM','SMCI','PLTR','PATH','COIN','MSTR','GEV','VRT','CEG','VST','AEP','FSLR','FLNC','ARRY','NUE','GRID','NIO','RKLB','IONQ','ACHR','JOBY','RIVN','LCID','AEHR','WOLF','ON','ENPH','SEDG','JPM','BAC','GS','V','MA','UNH','LLY','ABBV','SPY','QQQ','XLE','XLK','APLD','SHLS','STEM'];
 function shuffleSeed() { const a=[...SEED_POOL]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a.slice(0,30); }
 
+// ─── FOLLOW-THE-INVESTOR POOLS ────────────────────────────────────────────────
+// Hand-maintained and approximate. 13F filings are quarterly and land ~45 days
+// after quarter close, so even a "live" version would be months stale — not
+// worth wiring up an API for a beer game. These are the well-known positions
+// each name is associated with; refresh them whenever they start feeling dated.
+// The point is the persona, not the precision.
+const FOLLOW_PORTFOLIOS = [
+  { id: 'pelosi', name: 'Pelosi',
+    blurb: 'Congressional disclosures — mega-cap tech and long-dated calls',
+    tickers: ['NVDA','AAPL','MSFT','GOOGL','AMZN','AVGO','CRM','PANW','VST','TEM'] },
+  { id: 'burry', name: 'Burry',
+    blurb: 'Scion — deep-value contrarian, permanently early on the crash',
+    tickers: ['BABA','JD','BIDU','EL','HCA','MOH','ORCL','PFE','BRKR'] },
+  { id: 'buffett', name: 'Buffett',
+    blurb: 'Berkshire — buy boring, hold forever, sit on a cash mountain',
+    tickers: ['AAPL','BAC','AXP','KO','CVX','OXY','MCO','CB','KHC','DVA'] },
+  { id: 'wood', name: 'Cathie Wood',
+    blurb: 'ARK — maximum conviction, maximum volatility',
+    tickers: ['TSLA','COIN','ROKU','PLTR','HOOD','RBLX','CRSP','TEM','PATH','TDOC'] },
+  { id: 'ackman', name: 'Ackman',
+    blurb: 'Pershing Square — a handful of huge concentrated bets',
+    tickers: ['UBER','BN','CMG','QSR','HLT','GOOGL','NKE','AMZN','HHH'] },
+  { id: 'druck', name: 'Druckenmiller',
+    blurb: 'Duquesne — never had a down year, rotates fast',
+    tickers: ['NVDA','COHR','TEVA','NTRA','WFC','KVUE','SEG','MSFT'] },
+  { id: 'tepper', name: 'Tepper',
+    blurb: 'Appaloosa — heavy China tech and AI',
+    tickers: ['BABA','PDD','NVDA','AMZN','META','MSFT','ORCL','UBER','JD','CAVA'] },
+  { id: 'cramer', name: 'Cramer',
+    blurb: 'Charitable Trust — invert at your own risk',
+    tickers: ['AAPL','NVDA','GOOGL','AMZN','META','LLY','COST','HON','DIS','WMT'] },
+  { id: 'kitty', name: 'Roaring Kitty',
+    blurb: 'He likes the stock. That is the whole thesis',
+    tickers: ['GME','CHWY'] },
+  { id: 'chamath', name: 'Chamath',
+    blurb: 'Social Capital — SPAC king, All-In podcast bestie',
+    tickers: ['SOFI','OPEN','IOT','AMZN','GOOGL','TSLA','PLTR'] },
+];
+
 // ─── DRAFT SUGGESTION TABS ────────────────────────────────────────────────────
 // Which tab is showing, plus the lazily-fetched earnings calendar. Earnings is
 // the only tab needing a network call, so it's fetched on first open rather
@@ -706,6 +749,7 @@ let _seedTabInit = false;      // default-tab choice happens once, then respects
 let _earningsPool = null;      // null = not fetched yet
 let _earningsState = 'idle';   // idle | loading | ready | error
 const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+let followWho = FOLLOW_PORTFOLIOS[0].id;
 const SEED_TAB_BLURB = {
   bench:    'Names you’ve drafted before, most-used first',
   field:    'Most widely held across the league',
@@ -713,6 +757,11 @@ const SEED_TAB_BLURB = {
   winners:  'Best average week in The Pit — history, not a forecast',
   random:   'Suggested picks (randomized)',
 };
+
+function currentFollow() {
+  return FOLLOW_PORTFOLIOS.find(f => f.id === followWho) || FOLLOW_PORTFOLIOS[0];
+}
+function setFollowWho(id) { followWho = id; renderDraftPane(); }
 
 async function loadEarningsPool() {
   if (_earningsState === 'loading' || _earningsState === 'ready') return;
@@ -756,6 +805,9 @@ function currentSeedPool() {
   }
   if (seedTab === 'winners') {
     return { items: buildWinnersPool().slice(0, 40), empty: 'No completed weeks yet.' };
+  }
+  if (seedTab === 'follow') {
+    return { items: currentFollow().tickers.map(t => ({ ticker: t, meta: '' })), empty: '' };
   }
   if (seedTab === 'earnings') {
     if (_earningsState === 'loading') return { items: [], empty: 'Loading earnings…' };
@@ -2295,16 +2347,23 @@ function renderDraftPane() {
   const TABS = [
     ['bench',    'Your bench'],
     ['field',    'The field'],
+    ['follow',   'Follow'],
     ['earnings', 'Earnings'],
     ['winners',  'Winners'],
     ['random',   'Random'],
   ];
   const { items, empty } = currentSeedPool();
+  const blurb = seedTab === 'follow' ? currentFollow().blurb : (SEED_TAB_BLURB[seedTab] || '');
   html += `<div class="seed-section">
     <div class="seed-tabs">${TABS.map(([id, label]) =>
       `<button class="seed-tab${seedTab===id?' active':''}" data-seed-tab="${id}">${esc(label)}</button>`
-    ).join('')}</div>
-    <div class="seed-label">${esc(SEED_TAB_BLURB[seedTab] || '')}</div>`;
+    ).join('')}</div>`;
+  if (seedTab === 'follow') {
+    html += `<div class="follow-pills">${FOLLOW_PORTFOLIOS.map(f =>
+      `<button class="follow-pill${followWho===f.id?' active':''}" data-follow-who="${esc(f.id)}">${esc(f.name)}</button>`
+    ).join('')}</div>`;
+  }
+  html += `<div class="seed-label">${esc(blurb)}</div>`;
   if (!items.length) {
     html += `<div class="seed-empty">${esc(empty)}</div>`;
   } else {
@@ -2478,6 +2537,8 @@ if (!window._seedChipInit) {
     if (!e.target || !e.target.closest) return;
     const tab = e.target.closest('[data-seed-tab]');
     if (tab) { setSeedTab(tab.getAttribute('data-seed-tab')); return; }
+    const who = e.target.closest('[data-follow-who]');
+    if (who) { setFollowWho(who.getAttribute('data-follow-who')); return; }
     const chip = e.target.closest('[data-seed-ticker]');
     if (chip) addFromSeed(chip.getAttribute('data-seed-ticker'));
   });
