@@ -20,6 +20,20 @@ function mondayOfWeek(etDateStr) {
 
 // First trading day (YYYY-MM-DD) of the week containing the given ET date —
 // usually Monday, Tuesday on holiday-Monday weeks.
+function addDaysET(etDateStr, n) {
+  const d = new Date(etDateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// True when tonight's 8 PM ET is the draft lock — i.e. tomorrow is the first
+// trading day of its week. Normally that's Sunday; on a holiday-Monday week
+// it's Monday, matching the client's getLockTime.
+function isLockEve(etDateStr) {
+  const tomorrow = addDaysET(etDateStr, 1);
+  return tomorrow === firstTradingDayOfWeek(tomorrow);
+}
+
 function firstTradingDayOfWeek(etDateStr) {
   const probe = new Date(mondayOfWeek(etDateStr) + 'T12:00:00Z');
   for (let i = 0; i < 5; i++) {
@@ -815,11 +829,11 @@ Write a single push body that builds final-day drama. Reference the standings br
 }
 
 async function handleDraftLockSummary(env, etDate) {
-  // Fires at 8 PM ET Sunday (the lock). The week that just locked has its
-  // week_start on tomorrow's Monday.
-  const d = new Date(etDate + 'T12:00:00Z');
-  d.setUTCDate(d.getUTCDate() + 1);
-  const monday = d.toISOString().slice(0, 10);
+  // Fires at 8 PM ET on lock eve — Sunday normally, Monday on a holiday-Monday
+  // week. Take the Monday of *tomorrow's* week rather than tomorrow itself:
+  // on a normal week those are the same day, but when the lock is Monday night
+  // tomorrow is Tuesday and the week_start is the Monday just gone.
+  const monday = mondayOfWeek(addDaysET(etDate, 1));
   const weeks = await sbGet(env, `sdl_weeks?week_start=eq.${monday}&select=*`);
   if (!weeks || !weeks.length) return { sent: 0, cleaned: 0, note: 'no week' };
   const week = weeks[0];
@@ -897,10 +911,14 @@ async function handleScheduled(env) {
   // don't double-fire on the same morning.
   const finalDayKickoffTime = etHour === 9 && etMinute === 30 && isTradingDay && etDate === lastDay && firstDay !== lastDay;
   // Reminders: 4 PM ET Sat/Sun. Close: 4 PM ET on the week's last trading day.
-  const reminderTime = etHour === 16 && etMinute === 0 && (etWeekday === 'Sat' || etWeekday === 'Sun');
+  // Reminders: 4 PM ET Sat/Sun, plus lock day itself when that isn't Sunday —
+  // on a holiday-Monday week the last call belongs on Monday, four hours before
+  // the 8 PM lock, not on Sunday when there's still a day and a half left.
+  const lockEve = isLockEve(etDate);
+  const reminderTime = etHour === 16 && etMinute === 0 && (etWeekday === 'Sat' || etWeekday === 'Sun' || lockEve);
   const closeTime = etHour === 16 && etMinute === 0 && isTradingDay && etDate === lastDay;
-  // Draft-lock summary: 8 PM ET Sunday — themes across all locked rosters.
-  const lockSummaryTime = etHour === 20 && etMinute === 0 && etWeekday === 'Sun';
+  // Draft-lock summary: 8 PM ET on lock eve — themes across all locked rosters.
+  const lockSummaryTime = etHour === 20 && etMinute === 0 && lockEve;
 
   if (kickoffTime) {
     try { await handleWeekKickoff(env, etDate); } catch {}
@@ -956,7 +974,9 @@ async function handleScheduled(env) {
   }
 
   let sent = 0, cleaned = 0;
-  const isLastCall = etWeekday === 'Sun';
+  // "4 hours to lock" is only true on lock eve. On a holiday-Monday week the
+  // Sunday reminder is ~28 hours out, so it stays the generic nudge.
+  const isLastCall = lockEve;
   const titleBase = isLastCall ? '⏰ 4 hours to lock' : '📝 Make your picks';
 
   for (const sub of subs) {

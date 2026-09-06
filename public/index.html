@@ -1469,13 +1469,18 @@ function getActiveWeekStart() {
 }
 
 function getLockTime(weekStart) {
-  // Sunday 8PM ET before the given Monday
-  const mon = new Date(weekStart + 'T00:00:00Z');
-  const sun = new Date(mon); sun.setUTCDate(mon.getUTCDate() - 1);
+  // 8 PM ET the evening before the week's first TRADING day. Normally that's
+  // Sunday, but on a holiday-Monday week (Labor Day, MLK, Presidents', Memorial)
+  // it's Monday night. Locking Sunday on those weeks froze picks ~37 hours
+  // before the cost basis was even taken — a full extra day of thinking time
+  // lost for no reason, since nothing can move while the market is shut.
+  // Open and close were already holiday-aware; this was the one that wasn't.
+  const eve = firstTradingDay(weekStart);
+  eve.setUTCDate(eve.getUTCDate() - 1);
   const offset = etOffsetHours();
   // 8PM ET = 20:00 ET = (20 - offset) UTC
-  sun.setUTCHours(20 - offset, 0, 0, 0);
-  return sun;
+  eve.setUTCHours(20 - offset, 0, 0, 0);
+  return eve;
 }
 
 // US market holidays (NYSE/Nasdaq full-day closures). Extend per year as needed.

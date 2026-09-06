@@ -192,11 +192,15 @@ catch.
 - **Last trading day 9:30 AM ET** (Fri, or Thu on a holiday-Friday week):
   "Final bell day" broadcast (`handleWeekFinalDayKickoff`). Skipped on weeks
   where first === last so it doesn't double-fire alongside the opening kickoff.
-- **Sat 4 PM ET** and **Sun 4 PM ET**: reminder push to players who haven't
-  submitted yet for the upcoming draft week.
-- **Sun 8 PM ET**: draft-lock summary broadcast (`handleDraftLockSummary`) —
-  AI-generated themes/consensus across the now-locked rosters for the
-  upcoming week.
+- **Sat 4 PM ET**, **Sun 4 PM ET**, and **4 PM ET on lock eve** if that isn't
+  Sunday: reminder push to players who haven't submitted yet. `isLastCall`
+  (the "4 hours to lock" wording) is tied to lock eve, not to Sunday — on a
+  holiday-Monday week the Sunday reminder is ~28 hours out.
+- **8 PM ET on lock eve** (Sunday normally, Monday on a holiday-Monday week):
+  draft-lock summary broadcast (`handleDraftLockSummary`) — AI-generated
+  themes/consensus across the now-locked rosters. It derives the week as
+  `mondayOfWeek(addDaysET(etDate, 1))`, **not** `etDate + 1`: on a Monday-night
+  lock, tomorrow is Tuesday but `week_start` is the Monday just gone.
 - **Last trading day 4 PM ET** (usually Fri, Thu on holiday-Friday weeks):
   close-of-week broadcast — worker snapshots `prices_close` from Finnhub,
   calls Anthropic for a recap + one-line headline (both cached on `sdl_weeks`),
@@ -209,6 +213,13 @@ catch.
 `MARKET_HOLIDAYS` is duplicated in both `worker.js` and `public/index.html`
 (keep them in sync; extend per year). Effects:
 
+- **Draft lock** (`public/index.html` `getLockTime` → `firstTradingDay`, and
+  `worker.js` `isLockEve`): 8 PM ET the evening **before the first trading
+  day** — Sunday normally, Monday on a holiday-Monday week. Locking Sunday on
+  those weeks froze picks ~37 hours before the cost basis was taken, costing
+  players a day of thinking time while the market was shut. Every lock is now
+  ~13.6h ahead of the 9:35 open snapshot regardless of holidays. Client and
+  worker derive this independently, so **keep them in sync**.
 - **Open snapshot** (`public/index.html` `getOpenSnapshotTime` →
   `firstTradingDay`): bases each week's cost basis on the first actual trading
   day at 9:30 ET, so a holiday Monday (e.g. Memorial Day) snapshots Tuesday.
