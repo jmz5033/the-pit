@@ -863,10 +863,23 @@ const SEED_TAB_BLURB = {
   random:   'Suggested picks (randomized)',
 };
 
-function currentFollow() {
-  return FOLLOW_PORTFOLIOS.find(f => f.id === followWho) || FOLLOW_PORTFOLIOS[0];
+let themeWhich = THEMES[0].id;
+
+// Follow and Themes are the same shape — pick one basket from a pill row, see
+// its tickers — so they share the rendering and click handling. Anything else
+// returns null and renders as a plain grid.
+function subPicker(tab) {
+  if (tab === 'follow') return { list: FOLLOW_PORTFOLIOS, active: followWho, attr: 'data-follow-who' };
+  if (tab === 'themes') return { list: THEMES, active: themeWhich, attr: 'data-theme-which' };
+  return null;
+}
+function activeSubItem(tab) {
+  const p = subPicker(tab);
+  if (!p) return null;
+  return p.list.find(x => x.id === p.active) || p.list[0];
 }
 function setFollowWho(id) { followWho = id; renderDraftPane(); }
+function setThemeWhich(id) { themeWhich = id; renderDraftPane(); }
 
 async function loadEarningsPool() {
   if (_earningsState === 'loading' || _earningsState === 'ready') return;
@@ -911,8 +924,8 @@ function currentSeedPool() {
   if (seedTab === 'winners') {
     return { items: buildWinnersPool().slice(0, 40), empty: 'No completed weeks yet.' };
   }
-  if (seedTab === 'follow') {
-    return { items: currentFollow().tickers.map(t => ({ ticker: t, meta: '' })), empty: '' };
+  if (seedTab === 'follow' || seedTab === 'themes') {
+    return { items: activeSubItem(seedTab).tickers.map(t => ({ ticker: t, meta: '' })), empty: '' };
   }
   if (seedTab === 'earnings') {
     if (_earningsState === 'loading') return { items: [], empty: 'Loading earnings…' };
@@ -921,6 +934,49 @@ function currentSeedPool() {
   }
   return { items: seedList.map(t => ({ ticker: t, meta: '' })), empty: '' };
 }
+
+// ─── THEME BASKETS ────────────────────────────────────────────────────────────
+// Hand-curated, same maintenance story as FOLLOW_PORTFOLIOS: a starting point
+// for "I want to bet on a vibe this week", not a screen. All US-listed and
+// comfortably above the $1 draftability floor.
+const THEMES = [
+  { id: 'gambling', name: '🎰 Gambling',
+    blurb: 'Casinos, sportsbooks and the house always winning',
+    tickers: ['DKNG','FLUT','MGM','LVS','WYNN','CZR','PENN','BYD','RSI','GENI'] },
+  { id: 'pharma', name: '💊 Drugs',
+    blurb: 'Big pharma, biotech and the weight-loss gold rush',
+    tickers: ['LLY','NVO','PFE','MRK','ABBV','AMGN','BMY','GILD','VKTX','MRNA'] },
+  { id: 'sports', name: '🏈 Sports',
+    blurb: 'Kit, sneakers, leagues and the teams themselves',
+    tickers: ['NKE','LULU','ONON','UAA','DKS','FL','TKO','MANU','EA','BIRK'] },
+  { id: 'war', name: '⚔️ War',
+    blurb: 'Primes, drones and everything with a defence budget',
+    tickers: ['LMT','RTX','NOC','GD','LHX','BA','HII','LDOS','KTOS','AVAV'] },
+  { id: 'vice', name: '🥃 Booze & Smokes',
+    blurb: 'Distillers, brewers and the tobacco dividend machine',
+    tickers: ['STZ','BF.B','TAP','SAM','DEO','PM','MO','TPB'] },
+  { id: 'ai', name: '🤖 AI',
+    blurb: 'Silicon, models and the picks-and-shovels trade',
+    tickers: ['NVDA','AMD','AVGO','SMCI','PLTR','MSFT','GOOGL','MU','ARM','VRT'] },
+  { id: 'crypto', name: '₿ Crypto',
+    blurb: 'Exchanges, miners and leveraged balance sheets',
+    tickers: ['COIN','MSTR','HOOD','MARA','RIOT','CLSK','HUT','CIFR','WULF','BITF'] },
+  { id: 'space', name: '🚀 Space',
+    blurb: 'Launch, satellites and lunar landers',
+    tickers: ['RKLB','ASTS','LUNR','RDW','PL','SPCE','BA','LMT','AVAV'] },
+  { id: 'nuclear', name: '☢️ Nuclear',
+    blurb: 'Reactors, fuel and the power bill for all those data centres',
+    tickers: ['CEG','VST','TLN','SMR','OKLO','NNE','LEU','CCJ','BWXT'] },
+  { id: 'food', name: '🍔 Fast Food',
+    blurb: 'Drive-thrus, burritos and wings',
+    tickers: ['MCD','CMG','WING','SHAK','YUM','DPZ','QSR','CAVA','TXRH','DNUT'] },
+  { id: 'travel', name: '✈️ Travel',
+    blurb: 'Airlines, cruises and where you book them',
+    tickers: ['DAL','UAL','AAL','LUV','ABNB','BKNG','EXPE','RCL','CCL','NCLH'] },
+  { id: 'meme', name: '🐸 Meme',
+    blurb: 'Reddit’s finest. Handle with care',
+    tickers: ['GME','AMC','KOSS','BBAI','SOUN','RDDT','DJT','TSLA','PLTR','HOOD'] },
+];
 
 // ─── HTML ESCAPE ──────────────────────────────────────────────────────────────
 const ESC_MAP = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
@@ -2458,19 +2514,21 @@ function renderDraftPane() {
     ['bench',    'Your bench'],
     ['field',    'The field'],
     ['follow',   'Follow'],
+    ['themes',   'Themes'],
     ['earnings', 'Earnings'],
     ['winners',  'Winners'],
     ['random',   'Random'],
   ];
   const { items, empty } = currentSeedPool();
-  const blurb = seedTab === 'follow' ? currentFollow().blurb : (SEED_TAB_BLURB[seedTab] || '');
+  const picker = subPicker(seedTab);
+  const blurb = picker ? activeSubItem(seedTab).blurb : (SEED_TAB_BLURB[seedTab] || '');
   html += `<div class="seed-section">
     <div class="seed-tabs">${TABS.map(([id, label]) =>
       `<button class="seed-tab${seedTab===id?' active':''}" data-seed-tab="${id}">${esc(label)}</button>`
     ).join('')}</div>`;
-  if (seedTab === 'follow') {
-    html += `<div class="follow-pills">${FOLLOW_PORTFOLIOS.map(f =>
-      `<button class="follow-pill${followWho===f.id?' active':''}" data-follow-who="${esc(f.id)}">${esc(f.name)}</button>`
+  if (picker) {
+    html += `<div class="follow-pills">${picker.list.map(x =>
+      `<button class="follow-pill${picker.active===x.id?' active':''}" ${picker.attr}="${esc(x.id)}">${esc(x.name)}</button>`
     ).join('')}</div>`;
   }
   html += `<div class="seed-label">${esc(blurb)}</div>`;
@@ -2649,6 +2707,8 @@ if (!window._seedChipInit) {
     if (tab) { setSeedTab(tab.getAttribute('data-seed-tab')); return; }
     const who = e.target.closest('[data-follow-who]');
     if (who) { setFollowWho(who.getAttribute('data-follow-who')); return; }
+    const th = e.target.closest('[data-theme-which]');
+    if (th) { setThemeWhich(th.getAttribute('data-theme-which')); return; }
     const chip = e.target.closest('[data-seed-ticker]');
     if (chip) addFromSeed(chip.getAttribute('data-seed-ticker'));
   });
