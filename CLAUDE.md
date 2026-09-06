@@ -236,6 +236,30 @@ catch.
   return with the last-known `prices_live` value (avoids a missing close quote
   silently zeroing a position's P&L and flipping standings).
 
+## Checking the client before you push
+
+**Run `node scripts/check-client.cjs` after every edit to `public/index.html`.**
+
+Parsing the script is not enough. The client is a *single* script block, so any
+error thrown while it evaluates kills everything after it — including the join
+handler, which leaves the app stuck on the login screen with a dead Join
+button. That has shipped once already: `THEMES` was declared below
+`let themeWhich = THEMES[0].id`, a temporal dead zone violation that parses
+perfectly and throws at load.
+
+`new vm.Script(...)` only parses; it will not catch this, nor an undefined
+function reference. The harness executes the block against stubbed browser
+globals and asserts ~20 required globals actually bound. It exits non-zero on
+failure and takes about a second.
+
+Two live examples of what it catches and a parse check does not:
+- `THEMES` read before its `const` (whole app dead).
+- `renderStats` calling `fmt`, which exists only as a *local* inside
+  `showWeekResultsPopup` (one tab silently blank).
+
+New top-level `const`/`let` must be declared **above** first use — file order
+matters. Adding a major global? Add it to `REQUIRED` in the script.
+
 ## Git workflow
 
 Direct push to `main` (deploys via GitHub Actions). Feature branch
