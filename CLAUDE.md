@@ -140,6 +140,41 @@ deliberately **not** built. First-time players have an empty bench, so
   fallen under $1. `addPick`'s guard rejects those on tap with an explanation
   rather than the pools pre-screening (which would cost a quote per chip).
 
+## My Stats tab
+
+A per-player report card (`renderStats`), computed entirely from
+`LEAGUE_HISTORY` — **no network calls of its own**. `weekPortfolios(w)` reduces
+one closed week to per-player portfolio maths; `computePlayerStats(player)`
+aggregates across weeks. Incomplete rosters (`length !== MAX_PICKS`) and weeks
+that never closed are skipped so they can't skew averages.
+
+The two metrics that carry the value:
+
+- **Edge vs the field** — your weighted weekly return minus the mean of every
+  player's that week. The field is the right benchmark because it removes the
+  week's market direction: −2% when everyone lost 4% was a good week, and a raw
+  return can't show that.
+- **Conviction edge** — weighted return minus the equal-weight return of the
+  *same ten names*. Isolates whether position sizing added or destroyed value,
+  independent of stock selection.
+
+Other sections: hit rate, green weeks, beat-the-field record, sector table
+(min 4 picks, so one lucky pick can't masquerade as a sector edge), best/worst
+individual picks, and repeat tickers split into "keeps working" / "keeps not
+working" (drafted 3+ times, signed average). The offenders table is the most
+behaviour-changing number on the page — Justin has drafted FLNC nine times at
+a −7.6% average.
+
+The footer states the sample size and that a five-day horizon is mostly market
+movement. Keep it: players asked for this to inform real investing, hit rates
+sit at 38–53% (near coin-flip), and a 2-week player shows a flattering alpha
+off almost no data.
+
+**Gotcha:** `showWeekResultsPopup` has a *local* `const fmt`, not a global.
+Stats uses its own top-level `fmtMoney` — calling `fmt` from `renderStats`
+throws at runtime and silently blanks the tab, which a syntax check won't
+catch.
+
 ## Worker secrets currently expected
 
 | Secret | Used by |

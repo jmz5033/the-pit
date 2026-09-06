@@ -145,6 +145,25 @@ input:focus { border-color: var(--accent); }
 .seed-section { margin-bottom: 24px; }
 .seed-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 10px; }
 .seed-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Stats tab */
+.stats-head { font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; }
+.stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.stat-tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.stat-tile-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+.stat-tile-val { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 700; margin-top: 4px; }
+.stat-tile-sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.stat-up { color: var(--green); }
+.stat-down { color: var(--red); }
+.stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-bottom: 22px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.stat-card-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; font-weight: 700; }
+.stat-card-val { font-family: 'JetBrains Mono', monospace; font-size: 20px; }
+.stat-card-note { font-size: 11px; color: var(--muted2); line-height: 1.5; margin-top: 6px; }
+.stats-section { margin-bottom: 22px; }
+.stats-section-h { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
+.stats-two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+.stats-note { font-size: 10px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+.stats-footer { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); }
 .seed-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .seed-tab { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; padding: 5px 9px; border-radius: 5px; border: 1px solid var(--border2); background: transparent; color: var(--muted); cursor: pointer; transition: all 0.12s; }
 .seed-tab:hover { color: var(--muted2); border-color: var(--border); }
@@ -649,6 +668,7 @@ canvas.pit-chart {
   <div class="tabs">
     <button class="tab active" id="t-week" onclick="switchTab('week')">This Week</button>
     <button class="tab" id="t-history" onclick="switchTab('history')">History</button>
+    <button class="tab" id="t-stats" onclick="switchTab('stats')">My Stats</button>
     <button class="tab" id="t-settings" onclick="switchTab('settings')">Rules / Settings</button>
   </div>
 
@@ -660,6 +680,10 @@ canvas.pit-chart {
   <div id="tab-history" class="hidden">
     <div id="hist-loading" class="loading"><span class="spinner"></span>Loading…</div>
     <div id="hist-body" class="hidden"></div>
+  </div>
+
+  <div id="tab-stats" class="hidden">
+    <div id="stats-body"></div>
   </div>
 
   <div id="tab-settings" class="hidden">
@@ -739,6 +763,87 @@ const FOLLOW_PORTFOLIOS = [
     blurb: 'Social Capital — SPAC king, All-In podcast bestie',
     tickers: ['SOFI','OPEN','IOT','AMZN','GOOGL','TSLA','PLTR'] },
 ];
+
+// ─── PLAYER ANALYTICS ─────────────────────────────────────────────────────────
+// All derived from LEAGUE_HISTORY, which is already in memory — the Stats tab
+// makes no network calls of its own.
+
+// One closed week reduced to per-player portfolio maths. Returns null for weeks
+// that never closed, and skips incomplete rosters so a half-finished draft
+// can't drag a player's averages around.
+function weekPortfolios(w) {
+  const open = w.prices_open || {}, close = w.prices_close || {};
+  if (!Object.keys(close).length) return null;
+  const out = {};
+  for (const [player, picks] of Object.entries(w.rosters || {})) {
+    if (!picks || picks.length !== MAX_PICKS) continue;
+    const legs = [];
+    for (const p of picks) {
+      const o = Number(open[p.ticker]), c = Number(close[p.ticker]);
+      if (!(o > 0) || !(c > 0)) continue;
+      legs.push({ ticker: p.ticker, sector: p.sector || 'Other', alloc: Number(p.allocation) || 0, ret: (c - o) / o });
+    }
+    if (!legs.length) continue;
+    const cap = legs.reduce((s, l) => s + l.alloc, 0);
+    out[player] = {
+      legs,
+      // What the roster actually returned, and what it would have returned
+      // holding the same names in equal size. The gap is the value added (or
+      // destroyed) purely by how the player sized their bets.
+      weighted: cap ? legs.reduce((s, l) => s + l.alloc * l.ret, 0) / cap : 0,
+      equal: legs.reduce((s, l) => s + l.ret, 0) / legs.length,
+      pnl: legs.reduce((s, l) => s + l.alloc * l.ret, 0),
+    };
+  }
+  return out;
+}
+
+function computePlayerStats(player) {
+  let weeks = 0, pnl = 0, alphaSum = 0, convSum = 0, greenWeeks = 0, beatField = 0, hits = 0, legN = 0;
+  const sectors = new Map(), tickers = new Map(), allLegs = [], timeline = [];
+  for (const w of LEAGUE_HISTORY) {
+    const wk = weekPortfolios(w);
+    if (!wk) continue;
+    const me = wk[player];
+    if (!me) continue;
+    const all = Object.values(wk);
+    // The field average is the natural benchmark here: it strips out the
+    // week's market direction, so a -2% week when everyone lost 4% reads as
+    // the good week it actually was.
+    const field = all.reduce((s, x) => s + x.weighted, 0) / all.length;
+    weeks++; pnl += me.pnl; alphaSum += me.weighted - field; convSum += me.weighted - me.equal;
+    if (me.weighted > field) beatField++;
+    if (me.weighted > 0) greenWeeks++;
+    timeline.push({ week: w.week_start, you: me.weighted, field });
+    for (const l of me.legs) {
+      legN++; if (l.ret > 0) hits++;
+      allLegs.push({ ...l, week: w.week_start });
+      const s = sectors.get(l.sector) || { n: 0, sum: 0 }; s.n++; s.sum += l.ret; sectors.set(l.sector, s);
+      const t = tickers.get(l.ticker) || { n: 0, sum: 0 }; t.n++; t.sum += l.ret; tickers.set(l.ticker, t);
+    }
+  }
+  if (!weeks) return null;
+  allLegs.sort((a, b) => b.ret - a.ret);
+  return {
+    player, weeks, pnl, legN,
+    hitRate: hits / legN,
+    greenWeeks, beatField,
+    avgAlpha: alphaSum / weeks,
+    conviction: convSum / weeks,
+    timeline,
+    best: allLegs.slice(0, 5),
+    worst: allLegs.slice(-5).reverse(),
+    // n>=4 keeps a single lucky pick from presenting itself as a sector edge.
+    sectors: [...sectors].map(([sector, v]) => ({ sector, n: v.n, avg: v.sum / v.n }))
+      .filter(s => s.n >= 4).sort((a, b) => b.avg - a.avg),
+    // Names drafted repeatedly that keep losing — the most behaviour-changing
+    // number on the page.
+    offenders: [...tickers].map(([ticker, v]) => ({ ticker, n: v.n, avg: v.sum / v.n }))
+      .filter(t => t.n >= 3 && t.avg < 0).sort((a, b) => a.avg - b.avg).slice(0, 6),
+    loyal: [...tickers].map(([ticker, v]) => ({ ticker, n: v.n, avg: v.sum / v.n }))
+      .filter(t => t.n >= 3 && t.avg > 0).sort((a, b) => b.avg - a.avg).slice(0, 6),
+  };
+}
 
 // ─── DRAFT SUGGESTION TABS ────────────────────────────────────────────────────
 // Which tab is showing, plus the lazily-fetched earnings calendar. Earnings is
@@ -2841,11 +2946,110 @@ async function resetWeek() {
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 
 function switchTab(name) {
-  for (const t of ['week','history','settings']) {
+  for (const t of ['week','history','stats','settings']) {
     document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
     document.getElementById('t-'+t).classList.toggle('active', t===name);
   }
   if (name === 'history') loadHistory();
+  if (name === 'stats') renderStats();
+}
+
+// ─── STATS TAB ────────────────────────────────────────────────────────────────
+// Note: the identically-named `fmt` in showWeekResultsPopup is a local const,
+// not a global, so this needs its own.
+const fmtMoney = (n) => (n >= 0 ? '+$' : '-$') + Math.abs(Math.round(n)).toLocaleString('en-US');
+const pctS = (x, dp = 1) => (x >= 0 ? '+' : '') + (x * 100).toFixed(dp) + '%';
+const signCls = (x) => x > 0 ? 'stat-up' : x < 0 ? 'stat-down' : '';
+
+function renderStats() {
+  const el = document.getElementById('stats-body');
+  if (!el) return;
+  if (!LEAGUE_HISTORY.length) {
+    el.innerHTML = `<div class="loading">Loading history…</div>`;
+    return;
+  }
+  const s = computePlayerStats(MY_NAME);
+  if (!s) {
+    el.innerHTML = `<div class="stats-note">No completed weeks yet — play a full week and your report card shows up here.</div>`;
+    return;
+  }
+
+  const tile = (label, value, cls, sub) =>
+    `<div class="stat-tile"><div class="stat-tile-label">${esc(label)}</div>` +
+    `<div class="stat-tile-val ${cls||''}">${esc(value)}</div>` +
+    (sub ? `<div class="stat-tile-sub">${esc(sub)}</div>` : '') + `</div>`;
+
+  let h = `<div class="stats-head">Report card · ${esc(MY_NAME)} · ${s.weeks} completed week${s.weeks===1?'':'s'}</div>`;
+
+  h += `<div class="stat-tiles">
+    ${tile('Total P&L', fmtMoney(s.pnl), signCls(s.pnl))}
+    ${tile('Hit rate', (s.hitRate*100).toFixed(0)+'%', '', `${s.legN} picks`)}
+    ${tile('Green weeks', `${s.greenWeeks}/${s.weeks}`, signCls(s.greenWeeks*2 - s.weeks))}
+    ${tile('Beat the field', `${s.beatField}/${s.weeks}`, signCls(s.beatField*2 - s.weeks))}
+  </div>`;
+
+  // The two metrics worth actually thinking about.
+  h += `<div class="stat-cards">
+    <div class="stat-card">
+      <div class="stat-card-top"><span>Edge vs the field</span>
+        <span class="stat-card-val ${signCls(s.avgAlpha)}">${pctS(s.avgAlpha)}</span></div>
+      <div class="stat-card-note">Your weekly return minus everyone else's that week. Strips out
+      whether the market went up or down, so what's left is the picking.</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-top"><span>Conviction edge</span>
+        <span class="stat-card-val ${signCls(s.conviction)}">${pctS(s.conviction)}</span></div>
+      <div class="stat-card-note">What your sizing added versus putting the same ten names in
+      equal amounts. Positive means your biggest bets really were your best ones.</div>
+    </div>
+  </div>`;
+
+  if (s.sectors.length) {
+    h += `<div class="stats-section"><div class="stats-section-h">By sector</div>
+      <div class="picks-table-wrap"><table class="picks-table"><thead><tr>
+      <th>Sector</th><th style="text-align:right">Picks</th><th style="text-align:right">Avg return</th>
+      </tr></thead><tbody>`;
+    for (const x of s.sectors) {
+      h += `<tr><td>${esc(x.sector)}</td><td style="text-align:right">${x.n}</td>
+        <td style="text-align:right" class="${signCls(x.avg)}">${pctS(x.avg)}</td></tr>`;
+    }
+    h += `</tbody></table></div><div class="stats-note">Sectors with at least 4 picks.</div></div>`;
+  }
+
+  const legTable = (title, rows, note) => {
+    if (!rows.length) return '';
+    let t = `<div class="stats-section"><div class="stats-section-h">${esc(title)}</div>
+      <div class="picks-table-wrap"><table class="picks-table"><tbody>`;
+    for (const r of rows) {
+      t += `<tr><td style="font-weight:700">${esc(r.ticker)}</td>
+        <td style="font-size:10px;color:var(--muted)">${esc(fmtDate(r.week))}</td>
+        <td style="text-align:right" class="${signCls(r.ret)}">${pctS(r.ret)}</td></tr>`;
+    }
+    return t + `</tbody></table></div>${note?`<div class="stats-note">${esc(note)}</div>`:''}</div>`;
+  };
+  h += `<div class="stats-two-col">${legTable('Best picks', s.best)}${legTable('Worst picks', s.worst)}</div>`;
+
+  const repeatTable = (title, rows, note) => {
+    if (!rows.length) return '';
+    let t = `<div class="stats-section"><div class="stats-section-h">${esc(title)}</div>
+      <div class="picks-table-wrap"><table class="picks-table"><tbody>`;
+    for (const r of rows) {
+      t += `<tr><td style="font-weight:700">${esc(r.ticker)}</td>
+        <td style="font-size:10px;color:var(--muted)">drafted ${r.n}×</td>
+        <td style="text-align:right" class="${signCls(r.avg)}">${pctS(r.avg)}</td></tr>`;
+    }
+    return t + `</tbody></table></div>${note?`<div class="stats-note">${esc(note)}</div>`:''}</div>`;
+  };
+  h += `<div class="stats-two-col">
+    ${repeatTable('Keeps working', s.loyal, 'Drafted 3+ times, positive average.')}
+    ${repeatTable('Keeps not working', s.offenders, 'Drafted 3+ times, negative average. The habit to break.')}
+  </div>`;
+
+  h += `<div class="stats-note stats-footer">Based on ${s.weeks} weeks and ${s.legN} picks. That's a
+    small sample over a five-day horizon, where most of the movement is the market rather than the
+    pick — so read the sector and streak numbers as talking points, not as a strategy.</div>`;
+
+  el.innerHTML = h;
 }
 function fmtDate(s) { return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
 function show(id) { document.getElementById(id).classList.remove('hidden'); }
