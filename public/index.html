@@ -764,6 +764,49 @@ const FOLLOW_PORTFOLIOS = [
     tickers: ['SOFI','OPEN','IOT','AMZN','GOOGL','TSLA','PLTR'] },
 ];
 
+// ─── THEME BASKETS ────────────────────────────────────────────────────────────
+// Hand-curated, same maintenance story as FOLLOW_PORTFOLIOS: a starting point
+// for "I want to bet on a vibe this week", not a screen. All US-listed and
+// comfortably above the $1 draftability floor.
+const THEMES = [
+  { id: 'gambling', name: '🎰 Gambling',
+    blurb: 'Casinos, sportsbooks and the house always winning',
+    tickers: ['DKNG','FLUT','MGM','LVS','WYNN','CZR','PENN','BYD','RSI','GENI'] },
+  { id: 'pharma', name: '💊 Drugs',
+    blurb: 'Big pharma, biotech and the weight-loss gold rush',
+    tickers: ['LLY','NVO','PFE','MRK','ABBV','AMGN','BMY','GILD','VKTX','MRNA'] },
+  { id: 'sports', name: '🏈 Sports',
+    blurb: 'Kit, sneakers, leagues and the teams themselves',
+    tickers: ['NKE','LULU','ONON','UAA','DKS','FL','TKO','MANU','EA','BIRK'] },
+  { id: 'war', name: '⚔️ War',
+    blurb: 'Primes, drones and everything with a defence budget',
+    tickers: ['LMT','RTX','NOC','GD','LHX','BA','HII','LDOS','KTOS','AVAV'] },
+  { id: 'vice', name: '🥃 Booze & Smokes',
+    blurb: 'Distillers, brewers and the tobacco dividend machine',
+    tickers: ['STZ','BF.B','TAP','SAM','DEO','PM','MO','TPB'] },
+  { id: 'ai', name: '🤖 AI',
+    blurb: 'Silicon, models and the picks-and-shovels trade',
+    tickers: ['NVDA','AMD','AVGO','SMCI','PLTR','MSFT','GOOGL','MU','ARM','VRT'] },
+  { id: 'crypto', name: '₿ Crypto',
+    blurb: 'Exchanges, miners and leveraged balance sheets',
+    tickers: ['COIN','MSTR','HOOD','MARA','RIOT','CLSK','HUT','CIFR','WULF','BITF'] },
+  { id: 'space', name: '🚀 Space',
+    blurb: 'Launch, satellites and lunar landers',
+    tickers: ['RKLB','ASTS','LUNR','RDW','PL','SPCE','BA','LMT','AVAV'] },
+  { id: 'nuclear', name: '☢️ Nuclear',
+    blurb: 'Reactors, fuel and the power bill for all those data centres',
+    tickers: ['CEG','VST','TLN','SMR','OKLO','NNE','LEU','CCJ','BWXT'] },
+  { id: 'food', name: '🍔 Fast Food',
+    blurb: 'Drive-thrus, burritos and wings',
+    tickers: ['MCD','CMG','WING','SHAK','YUM','DPZ','QSR','CAVA','TXRH','DNUT'] },
+  { id: 'travel', name: '✈️ Travel',
+    blurb: 'Airlines, cruises and where you book them',
+    tickers: ['DAL','UAL','AAL','LUV','ABNB','BKNG','EXPE','RCL','CCL','NCLH'] },
+  { id: 'meme', name: '🐸 Meme',
+    blurb: 'Reddit’s finest. Handle with care',
+    tickers: ['GME','AMC','KOSS','BBAI','SOUN','RDDT','DJT','TSLA','PLTR','HOOD'] },
+];
+
 // ─── PLAYER ANALYTICS ─────────────────────────────────────────────────────────
 // All derived from LEAGUE_HISTORY, which is already in memory — the Stats tab
 // makes no network calls of its own.
@@ -934,49 +977,6 @@ function currentSeedPool() {
   }
   return { items: seedList.map(t => ({ ticker: t, meta: '' })), empty: '' };
 }
-
-// ─── THEME BASKETS ────────────────────────────────────────────────────────────
-// Hand-curated, same maintenance story as FOLLOW_PORTFOLIOS: a starting point
-// for "I want to bet on a vibe this week", not a screen. All US-listed and
-// comfortably above the $1 draftability floor.
-const THEMES = [
-  { id: 'gambling', name: '🎰 Gambling',
-    blurb: 'Casinos, sportsbooks and the house always winning',
-    tickers: ['DKNG','FLUT','MGM','LVS','WYNN','CZR','PENN','BYD','RSI','GENI'] },
-  { id: 'pharma', name: '💊 Drugs',
-    blurb: 'Big pharma, biotech and the weight-loss gold rush',
-    tickers: ['LLY','NVO','PFE','MRK','ABBV','AMGN','BMY','GILD','VKTX','MRNA'] },
-  { id: 'sports', name: '🏈 Sports',
-    blurb: 'Kit, sneakers, leagues and the teams themselves',
-    tickers: ['NKE','LULU','ONON','UAA','DKS','FL','TKO','MANU','EA','BIRK'] },
-  { id: 'war', name: '⚔️ War',
-    blurb: 'Primes, drones and everything with a defence budget',
-    tickers: ['LMT','RTX','NOC','GD','LHX','BA','HII','LDOS','KTOS','AVAV'] },
-  { id: 'vice', name: '🥃 Booze & Smokes',
-    blurb: 'Distillers, brewers and the tobacco dividend machine',
-    tickers: ['STZ','BF.B','TAP','SAM','DEO','PM','MO','TPB'] },
-  { id: 'ai', name: '🤖 AI',
-    blurb: 'Silicon, models and the picks-and-shovels trade',
-    tickers: ['NVDA','AMD','AVGO','SMCI','PLTR','MSFT','GOOGL','MU','ARM','VRT'] },
-  { id: 'crypto', name: '₿ Crypto',
-    blurb: 'Exchanges, miners and leveraged balance sheets',
-    tickers: ['COIN','MSTR','HOOD','MARA','RIOT','CLSK','HUT','CIFR','WULF','BITF'] },
-  { id: 'space', name: '🚀 Space',
-    blurb: 'Launch, satellites and lunar landers',
-    tickers: ['RKLB','ASTS','LUNR','RDW','PL','SPCE','BA','LMT','AVAV'] },
-  { id: 'nuclear', name: '☢️ Nuclear',
-    blurb: 'Reactors, fuel and the power bill for all those data centres',
-    tickers: ['CEG','VST','TLN','SMR','OKLO','NNE','LEU','CCJ','BWXT'] },
-  { id: 'food', name: '🍔 Fast Food',
-    blurb: 'Drive-thrus, burritos and wings',
-    tickers: ['MCD','CMG','WING','SHAK','YUM','DPZ','QSR','CAVA','TXRH','DNUT'] },
-  { id: 'travel', name: '✈️ Travel',
-    blurb: 'Airlines, cruises and where you book them',
-    tickers: ['DAL','UAL','AAL','LUV','ABNB','BKNG','EXPE','RCL','CCL','NCLH'] },
-  { id: 'meme', name: '🐸 Meme',
-    blurb: 'Reddit’s finest. Handle with care',
-    tickers: ['GME','AMC','KOSS','BBAI','SOUN','RDDT','DJT','TSLA','PLTR','HOOD'] },
-];
 
 // ─── HTML ESCAPE ──────────────────────────────────────────────────────────────
 const ESC_MAP = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
