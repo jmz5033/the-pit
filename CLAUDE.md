@@ -91,6 +91,46 @@ buys tens of millions of shares and one $0.0001 tick swings P&L 100%.
   a pasted address-bar URL (which sends no `Origin`/`Referer`), and it only
   returns public quote data.
 
+## Draft suggestion tabs
+
+The draft pane's chip grid has five tabs (`seedTab`, rendered in
+`renderDraftPane`). Four are computed client-side from `LEAGUE_HISTORY` —
+every week's `rosters`/`prices_open`/`prices_close`, fetched **once** at app
+load inside `seedPlayerColorOrder` (which already made that call for player
+colours, so this added no round trip; `prices_daily` is deliberately not
+selected as it dwarfs the rest).
+
+| Tab | Source | Ranked by |
+|---|---|---|
+| Your bench | your own past picks | times drafted, then recency |
+| The field | everyone else's picks | distinct owners, then total |
+| Earnings | `/api/earnings` (lazy) | date, then symbol |
+| Winners | open→close per week | best average week |
+| Random | static `SEED_POOL` | shuffled |
+
+Why these: across 21 weeks ~4 of every 10 picks are a name that player has
+drafted before, but only ~1.7 carry over from the immediately previous week —
+people rotate a personal bench rather than re-running a roster. So *Your
+bench* is ranked by frequency, and a "repeat last week" button was
+deliberately **not** built. First-time players have an empty bench, so
+`_seedTabInit` opens them on *The field* once, then respects their choice.
+
+- **Earnings is intentionally unfiltered** — it's a prompt for ideas, not a
+  portfolio suggestion, so slim or obscure weeks are fine. The worker only
+  dedupes (Finnhub returns one row per fiscal period, so a symbol can appear
+  twice for one date — keep the row with real estimates) and drops symbols
+  outside `^[A-Z0-9.\-]{1,10}$` before they become DOM labels.
+- `bmo`/`amc` is shown as "open"/"close". It matters: an `amc` print on the
+  week's last day settles *after* the 4 PM close snapshot, so it cannot move
+  that week's score.
+- **Chips use `data-seed-ticker` + a delegated listener**, never an inline
+  `onclick`. The old markup interpolated the ticker straight into the handler,
+  which was safe for a hardcoded pool but is an injection hole once symbols
+  arrive from Finnhub's calendar.
+- Pools are historical, so they can surface a name that has since delisted or
+  fallen under $1. `addPick`'s guard rejects those on tap with an explanation
+  rather than the pools pre-screening (which would cost a quote per chip).
+
 ## Worker secrets currently expected
 
 | Secret | Used by |

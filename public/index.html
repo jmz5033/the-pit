@@ -145,7 +145,13 @@ input:focus { border-color: var(--accent); }
 .seed-section { margin-bottom: 24px; }
 .seed-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 10px; }
 .seed-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.seed-chip { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 5px; border: 1px solid var(--border2); background: var(--surface2); color: var(--muted2); cursor: pointer; transition: all 0.12s; }
+.seed-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.seed-tab { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; padding: 5px 9px; border-radius: 5px; border: 1px solid var(--border2); background: transparent; color: var(--muted); cursor: pointer; transition: all 0.12s; }
+.seed-tab:hover { color: var(--muted2); border-color: var(--border); }
+.seed-tab.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+.seed-empty { font-size: 11px; color: var(--muted); padding: 10px 0; }
+.seed-chip-meta { display: block; font-size: 9px; font-weight: 400; color: var(--muted); margin-top: 1px; }
+.seed-chip { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 5px; border: 1px solid var(--border2); background: var(--surface2); color: var(--muted2); cursor: pointer; transition: all 0.12s; text-align: center; }
 .seed-chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 .seed-chip.added { border-color: var(--green); color: var(--green); background: rgba(34,197,94,0.08); cursor: default; }
 
@@ -691,6 +697,74 @@ const AI_PROXY_URL = '/api/recap';
 const SEED_POOL = ['NVDA','MSFT','AAPL','META','AVGO','AMZN','GOOGL','TSLA','AMD','TSM','SMCI','PLTR','PATH','COIN','MSTR','GEV','VRT','CEG','VST','AEP','FSLR','FLNC','ARRY','NUE','GRID','NIO','RKLB','IONQ','ACHR','JOBY','RIVN','LCID','AEHR','WOLF','ON','ENPH','SEDG','JPM','BAC','GS','V','MA','UNH','LLY','ABBV','SPY','QQQ','XLE','XLK','APLD','SHLS','STEM'];
 function shuffleSeed() { const a=[...SEED_POOL]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a.slice(0,30); }
 
+// ─── DRAFT SUGGESTION TABS ────────────────────────────────────────────────────
+// Which tab is showing, plus the lazily-fetched earnings calendar. Earnings is
+// the only tab needing a network call, so it's fetched on first open rather
+// than at app load.
+let seedTab = 'bench';
+let _seedTabInit = false;      // default-tab choice happens once, then respects the player
+let _earningsPool = null;      // null = not fetched yet
+let _earningsState = 'idle';   // idle | loading | ready | error
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const SEED_TAB_BLURB = {
+  bench:    'Names you’ve drafted before, most-used first',
+  field:    'Most widely held across the league',
+  earnings: 'Reporting this week — a prompt, not a recommendation',
+  winners:  'Best average week in The Pit — history, not a forecast',
+  random:   'Suggested picks (randomized)',
+};
+
+async function loadEarningsPool() {
+  if (_earningsState === 'loading' || _earningsState === 'ready') return;
+  if (!WK || !WK.week_start) return;
+  _earningsState = 'loading';
+  renderDraftPane();
+  try {
+    const r = await fetch(`/api/earnings?week=${encodeURIComponent(WK.week_start)}`);
+    const d = r.ok ? await r.json() : null;
+    const rows = (d && Array.isArray(d.earnings)) ? d.earnings : [];
+    _earningsPool = rows.map(e => {
+      // 'bmo' reports land before the open; 'amc' after the close — and an amc
+      // print on the week's last day settles after our 4 PM snapshot, so it
+      // can't move that week's score at all. Worth showing, not hiding.
+      const day = e.date ? DOW[new Date(e.date + 'T12:00:00Z').getUTCDay()] : '';
+      const when = e.hour === 'bmo' ? 'open' : e.hour === 'amc' ? 'close' : '';
+      return { ticker: e.symbol, meta: [day, when].filter(Boolean).join(' ') };
+    });
+    _earningsState = 'ready';
+  } catch {
+    _earningsState = 'error';
+  }
+  renderDraftPane();
+}
+
+function setSeedTab(tab) {
+  seedTab = tab;
+  if (tab === 'earnings') loadEarningsPool();
+  renderDraftPane();
+}
+
+// Returns { items, empty } for the active tab. Capped so the grid stays
+// scannable on a phone — except earnings, which is a full weekly list.
+function currentSeedPool() {
+  if (seedTab === 'bench') {
+    const items = buildBenchPool(MY_NAME).slice(0, 40);
+    return { items, empty: "You haven't drafted before — try The Field." };
+  }
+  if (seedTab === 'field') {
+    return { items: buildFieldPool(MY_NAME).slice(0, 40), empty: 'No league history yet.' };
+  }
+  if (seedTab === 'winners') {
+    return { items: buildWinnersPool().slice(0, 40), empty: 'No completed weeks yet.' };
+  }
+  if (seedTab === 'earnings') {
+    if (_earningsState === 'loading') return { items: [], empty: 'Loading earnings…' };
+    if (_earningsState === 'error') return { items: [], empty: "Couldn't load the earnings calendar." };
+    return { items: _earningsPool || [], empty: 'No companies report during this week.' };
+  }
+  return { items: seedList.map(t => ({ ticker: t, meta: '' })), empty: '' };
+}
+
 // ─── HTML ESCAPE ──────────────────────────────────────────────────────────────
 const ESC_MAP = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ESC_MAP[c]); }
@@ -863,18 +937,96 @@ function getPlayerColor(name) {
 // order never changes once assigned — so new joiners get appended at the
 // end and existing players keep their color forever. Runs once at app load
 // before loadWeek/loadHistory render anything.
+// Every completed week, fetched once at app load. Feeds both the player-color
+// ordering and the draft pane's suggestion tabs, so this stays one round trip.
+// prices_daily is deliberately not selected — it's by far the biggest column
+// and nothing here needs intra-week points.
+let LEAGUE_HISTORY = [];
+
 async function seedPlayerColorOrder() {
   try {
-    const rows = await sb('sdl_weeks?order=week_start.asc&select=week_start,rosters');
-    if (!rows || !rows.length) return;
+    LEAGUE_HISTORY = await sb('sdl_weeks?order=week_start.asc&select=week_start,rosters,prices_open,prices_close') || [];
+    if (!LEAGUE_HISTORY.length) return;
     const seen = new Set(playerOrder);
-    for (const r of rows) {
+    for (const r of LEAGUE_HISTORY) {
       const players = Object.keys(r.rosters || {}).sort();
       for (const p of players) {
         if (!seen.has(p)) { seen.add(p); playerOrder.push(p); }
       }
     }
   } catch {}
+}
+
+// ─── DRAFT SUGGESTION POOLS ───────────────────────────────────────────────────
+// Built from LEAGUE_HISTORY, so no extra network calls. Each returns
+// [{ ticker, meta }] where meta is the small grey label under the chip.
+
+// Tickers you've drafted before, most-used first, recent weeks breaking ties.
+// This is the big one: across 21 weeks, ~4 of every 10 picks are a name that
+// player has used before, though only ~1.7 carry over from the week just gone —
+// people rotate a personal bench rather than re-running a roster.
+function buildBenchPool(player) {
+  if (!player) return [];
+  const stats = new Map();
+  for (const w of LEAGUE_HISTORY) {
+    for (const p of (w.rosters?.[player] || [])) {
+      const s = stats.get(p.ticker) || { ticker: p.ticker, n: 0, last: '' };
+      s.n++; if (w.week_start > s.last) s.last = w.week_start;
+      stats.set(p.ticker, s);
+    }
+  }
+  return [...stats.values()]
+    .sort((a, b) => b.n - a.n || b.last.localeCompare(a.last) || a.ticker.localeCompare(b.ticker))
+    .map(s => ({ ticker: s.ticker, meta: s.n > 1 ? `×${s.n}` : '' }));
+}
+
+// What the rest of the league drafts, ranked by how many different people have
+// held it. This is the tab that works for newcomers — a first-time player has
+// no bench at all, and they're the ones most likely to be stuck.
+function buildFieldPool(player) {
+  const stats = new Map();
+  for (const w of LEAGUE_HISTORY) {
+    for (const [p, picks] of Object.entries(w.rosters || {})) {
+      if (p === player) continue;
+      for (const pick of (picks || [])) {
+        const s = stats.get(pick.ticker) || { ticker: pick.ticker, owners: new Set(), n: 0 };
+        s.owners.add(p); s.n++;
+        stats.set(pick.ticker, s);
+      }
+    }
+  }
+  return [...stats.values()]
+    .sort((a, b) => b.owners.size - a.owners.size || b.n - a.n || a.ticker.localeCompare(b.ticker))
+    .map(s => ({ ticker: s.ticker, meta: `${s.owners.size} owner${s.owners.size === 1 ? '' : 's'}` }));
+}
+
+// Best average week a ticker has ever put up in The Pit, using each week's
+// open→close move. History, not a forecast — a name that ran once is exactly
+// as likely to fade next week, which is the joke.
+function buildWinnersPool() {
+  const stats = new Map();
+  for (const w of LEAGUE_HISTORY) {
+    const open = w.prices_open || {}, close = w.prices_close || {};
+    if (!Object.keys(close).length) continue; // week never closed
+    const held = new Set();
+    for (const picks of Object.values(w.rosters || {})) {
+      for (const p of (picks || [])) held.add(p.ticker);
+    }
+    for (const t of held) {
+      const o = Number(open[t]), c = Number(close[t]);
+      if (!(o > 0) || !(c > 0)) continue;
+      const s = stats.get(t) || { ticker: t, sum: 0, n: 0 };
+      s.sum += (c - o) / o * 100; s.n++;
+      stats.set(t, s);
+    }
+  }
+  return [...stats.values()]
+    .map(s => ({ ticker: s.ticker, avg: s.sum / s.n }))
+    // >= 0.05 rather than > 0 so nothing renders as a "+0.0%" winner — SECI
+    // and a couple of flat names land there and read as noise.
+    .filter(s => s.avg >= 0.05)
+    .sort((a, b) => b.avg - a.avg)
+    .map(s => ({ ticker: s.ticker, meta: `+${s.avg.toFixed(1)}%` }));
 }
 
 
@@ -2133,11 +2285,41 @@ function renderDraftPane() {
   }
 
   const added = new Set(picks.map(p => p.ticker));
-  html += `<div class="seed-section"><div class="seed-label">Suggested picks (randomized)</div><div class="seed-grid">`;
-  for (const t of seedList) {
-    html += `<span class="seed-chip ${added.has(t)?'added':''}" onclick="addFromSeed('${t}')">${t}</span>`;
+  // First-time players have no bench at all, and they're the ones most likely
+  // to bounce — open them on The Field instead of an empty tab. Runs once so
+  // it never overrides a tab the player picked themselves.
+  if (!_seedTabInit && MY_NAME) {
+    _seedTabInit = true;
+    if (!buildBenchPool(MY_NAME).length) seedTab = 'field';
   }
-  html += `</div></div>`;
+  const TABS = [
+    ['bench',    'Your bench'],
+    ['field',    'The field'],
+    ['earnings', 'Earnings'],
+    ['winners',  'Winners'],
+    ['random',   'Random'],
+  ];
+  const { items, empty } = currentSeedPool();
+  html += `<div class="seed-section">
+    <div class="seed-tabs">${TABS.map(([id, label]) =>
+      `<button class="seed-tab${seedTab===id?' active':''}" data-seed-tab="${id}">${esc(label)}</button>`
+    ).join('')}</div>
+    <div class="seed-label">${esc(SEED_TAB_BLURB[seedTab] || '')}</div>`;
+  if (!items.length) {
+    html += `<div class="seed-empty">${esc(empty)}</div>`;
+  } else {
+    // Chips carry the ticker in a data attribute and are handled by a
+    // delegated listener. The old markup interpolated it straight into an
+    // inline onclick, which was fine for a hardcoded pool but would be an
+    // injection hole now that symbols arrive from Finnhub's calendar.
+    html += `<div class="seed-grid">`;
+    for (const it of items) {
+      html += `<span class="seed-chip${added.has(it.ticker)?' added':''}" data-seed-ticker="${esc(it.ticker)}">${esc(it.ticker)}` +
+        (it.meta ? `<span class="seed-chip-meta">${esc(it.meta)}</span>` : '') + `</span>`;
+    }
+    html += `</div>`;
+  }
+  html += `</div>`;
 
   el.innerHTML = html;
   renderDraftSaveStatus();
@@ -2285,6 +2467,19 @@ if (!window._suggestOutsideClickInit) {
   window._suggestOutsideClickInit = true;
   document.addEventListener('click', (e) => {
     if (!e.target.closest || !e.target.closest('.search-wrap')) hideSuggest();
+  });
+}
+
+// Delegated so the draft pane can re-render freely without rebinding, and so
+// ticker symbols never have to be interpolated into inline handlers.
+if (!window._seedChipInit) {
+  window._seedChipInit = true;
+  document.addEventListener('click', (e) => {
+    if (!e.target || !e.target.closest) return;
+    const tab = e.target.closest('[data-seed-tab]');
+    if (tab) { setSeedTab(tab.getAttribute('data-seed-tab')); return; }
+    const chip = e.target.closest('[data-seed-ticker]');
+    if (chip) addFromSeed(chip.getAttribute('data-seed-ticker'));
   });
 }
 

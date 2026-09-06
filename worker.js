@@ -1115,6 +1115,78 @@ export default {
       });
     }
 
+    if (url.pathname === '/api/earnings' && request.method === 'GET') {
+      // Companies reporting during the game week, for the draft pane's
+      // "Earnings" suggestion tab. Deliberately unfiltered — it's a prompt for
+      // ideas, not a curated portfolio, so a slim or obscure week is fine.
+      //
+      // One upstream call covers every US company for the whole range, and
+      // drafting happens Fri close → Sun 8 PM ET when markets are shut and
+      // nothing is competing for Finnhub's rate limit.
+      const origin = request.headers.get('origin') || '';
+      const referer = request.headers.get('referer') || '';
+      if (!(origin === url.origin || referer.startsWith(url.origin + '/'))) {
+        return json({ error: 'forbidden' }, 403);
+      }
+      if (!env.FH_KEY) return json({ error: 'FH_KEY not set' }, 500);
+      const week = url.searchParams.get('week') || '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(week)) return json({ error: 'bad week' }, 400);
+      const from = week;
+      const toD = new Date(week + 'T12:00:00Z');
+      toD.setUTCDate(toD.getUTCDate() + 4);
+      const to = toD.toISOString().slice(0, 10);
+
+      const cacheKey = new Request(`https://the-pit-cache/finnhub/earnings?from=${from}&to=${to}`);
+      const hit = await caches.default.match(cacheKey);
+      if (hit) return new Response(hit.body, {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      });
+
+      let rows = [];
+      try {
+        const r = await fetch(`https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&token=${env.FH_KEY}`);
+        if (!r.ok) return json({ from, to, earnings: [], error: `finnhub ${r.status}` });
+        const d = await r.json();
+        rows = Array.isArray(d?.earningsCalendar) ? d.earningsCalendar : [];
+      } catch (e) {
+        return json({ from, to, earnings: [], error: e.message || String(e) });
+      }
+
+      // Finnhub returns a row per fiscal period, so the same symbol can appear
+      // twice for one date — once with real estimates and once all-null (RENT
+      // does this). Keep the richer row. Symbols are also constrained to a sane
+      // charset before they reach the DOM as chip labels.
+      const bySymbol = new Map();
+      for (const row of rows) {
+        const symbol = String(row?.symbol || '').toUpperCase();
+        if (!/^[A-Z0-9.\-]{1,10}$/.test(symbol)) continue;
+        const cand = {
+          symbol,
+          date: typeof row.date === 'string' ? row.date : '',
+          hour: typeof row.hour === 'string' ? row.hour : '',
+          epsEstimate: typeof row.epsEstimate === 'number' ? row.epsEstimate : null,
+          revenueEstimate: typeof row.revenueEstimate === 'number' ? row.revenueEstimate : null,
+        };
+        const prev = bySymbol.get(symbol);
+        const score = (q) => (q.epsEstimate !== null ? 1 : 0) + (q.revenueEstimate ? 1 : 0) + (q.hour ? 1 : 0);
+        if (!prev || score(cand) > score(prev)) bySymbol.set(symbol, cand);
+      }
+      const earnings = Array.from(bySymbol.values())
+        .sort((a, b) => (a.date === b.date ? a.symbol.localeCompare(b.symbol) : a.date.localeCompare(b.date)));
+
+      const payload = JSON.stringify({ from, to, earnings });
+      // The calendar barely moves once published, and the draft window is only
+      // ~52h long, so a long TTL keeps this to a couple of upstream calls.
+      await caches.default.put(cacheKey, new Response(payload, {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=21600' },
+      }));
+      return new Response(payload, {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      });
+    }
+
     if (url.pathname === '/api/fh-check' && request.method === 'GET') {
       // Open diagnostic: bypasses the edge cache and returns the raw Finnhub
       // response for one or more symbols (comma-separated). No auth check —
