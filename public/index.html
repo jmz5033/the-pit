@@ -1597,9 +1597,15 @@ function isLocked(weekStart) {
 }
 
 function lockMessage(weekStart) {
+  // Format in ET explicitly. Without timeZone this renders in the viewer's own
+  // zone, and the lock instant is 00:00 UTC — so anyone at or east of UTC saw
+  // the following day ("Tue, Sep 8" for a Mon 8 PM ET lock). The whole game
+  // runs on ET, so the label should too.
   const lock = getLockTime(weekStart);
-  const sun = new Date(lock);
-  return `Locks ${sun.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})} at 8PM ET`;
+  const day = lock.toLocaleDateString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York',
+  });
+  return `Locks ${day} at 8PM ET`;
 }
 
 function timeUntilLock(weekStart) {
@@ -1919,7 +1925,7 @@ async function renderWeek() {
   if (!myDone && draftOpen && !locked) {
     html += `<div id="draft-pane"></div>`;
   } else if (!myDone && locked) {
-    html += `<div class="info-bar">⏰ <strong>Draft is locked.</strong> Picks lock Sunday 8 PM ET. Draft opens again at the next market close.</div>`;
+    html += `<div class="info-bar">⏰ <strong>Draft is locked.</strong> ${esc(lockMessage(WK.week_start))}. Draft opens again at the next market close.</div>`;
   } else if (!myDone && !draftOpen) {
     html += `<div class="info-bar">📅 <strong>Draft opens after this week's market close</strong> (Fri 4 PM ET, or Thu on holiday-Friday weeks).</div>`;
   } else if (myDone) {

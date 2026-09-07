@@ -1,0 +1,17 @@
+# Cloudflare Workers Assets reads this file (it is never served itself).
+#
+# The client is a single unhashed index.html, so a cached copy is a *stale app*,
+# not just stale markup — old timing logic, old tabs, old bugs. That has bitten
+# twice: players kept hitting a draft-lock that had already been moved, because
+# their browser was still running the previous deploy.
+#
+# no-cache does not mean "don't store"; it means "revalidate before use". The
+# browser still keeps the file and still gets a 304 when nothing changed, so
+# this costs one conditional request, not a full download.
+/*
+  Cache-Control: no-cache
+
+# The service worker especially must never be sticky — a stale one keeps
+# serving old push behaviour long after a deploy.
+/sw.js
+  Cache-Control: no-cache
