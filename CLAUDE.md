@@ -197,10 +197,26 @@ catch.
 - **Last trading day 9:30 AM ET** (Fri, or Thu on a holiday-Friday week):
   "Final bell day" broadcast (`handleWeekFinalDayKickoff`). Skipped on weeks
   where first === last so it doesn't double-fire alongside the opening kickoff.
-- **Sat 4 PM ET**, **Sun 4 PM ET**, and **4 PM ET on lock eve** if that isn't
-  Sunday: reminder push to players who haven't submitted yet. `isLastCall`
-  (the "4 hours to lock" wording) is tied to lock eve, not to Sunday — on a
-  holiday-Monday week the Sunday reminder is ~28 hours out.
+- Reminder pushes to players who haven't submitted, in three tiers. The
+  countdown wording keys off **lock eve, never a weekday** — on a
+  holiday-Monday week the Sunday reminder is ~28 hours out, so Monday carries
+  the countdown instead:
+
+  | When | Title |
+  |---|---|
+  | 4 PM Sat/Sun (not lock eve) | 📝 Make your picks |
+  | 4 PM lock eve | ⏰ 4 hours to lock |
+  | 7 PM lock eve | 🚨 1 hour to lock |
+
+  The 7 PM body reports how many picks they're short, read from
+  **`draft_picks`** — `rosters` only ever holds complete 10-pick submissions,
+  so it cannot tell you how far along someone is. Both lock-eve pushes share a
+  notification `tag` deliberately, so 7 PM replaces 4 PM in the tray instead of
+  stacking a stale "4 hours to lock" beside "1 hour to lock".
+
+  The 7 PM tick reaches the same reminder path, so its heartbeat insert is
+  guarded by `shouldHeartbeat` — otherwise lock-eve days would write two rows
+  and break "a missing row means the cron is broken".
 - **8 PM ET on lock eve** (Sunday normally, Monday on a holiday-Monday week):
   draft-lock summary broadcast (`handleDraftLockSummary`) — AI-generated
   themes/consensus across the now-locked rosters. It derives the week as

@@ -915,7 +915,14 @@ async function handleScheduled(env) {
   // on a holiday-Monday week the last call belongs on Monday, four hours before
   // the 8 PM lock, not on Sunday when there's still a day and a half left.
   const lockEve = isLockEve(etDate);
-  const reminderTime = etHour === 16 && etMinute === 0 && (etWeekday === 'Sat' || etWeekday === 'Sun' || lockEve);
+  // Three reminder tiers, all aimed only at players who haven't submitted:
+  //   4 PM Sat/Sun  — the weekend nudge
+  //   4 PM lock eve — four hours out (same slot on a normal week)
+  //   7 PM lock eve — one hour out, the final call
+  const reminderTime = etMinute === 0 && (
+    (etHour === 16 && (etWeekday === 'Sat' || etWeekday === 'Sun' || lockEve)) ||
+    (etHour === 19 && lockEve)
+  );
   const closeTime = etHour === 16 && etMinute === 0 && isTradingDay && etDate === lastDay;
   // Draft-lock summary: 8 PM ET on lock eve — themes across all locked rosters.
   const lockSummaryTime = etHour === 20 && etMinute === 0 && lockEve;
@@ -966,6 +973,9 @@ async function handleScheduled(env) {
   }
   const week = weeks[0];
   const rosters = week.rosters || {};
+  // Partially-built rosters live in draft_picks; `rosters` only ever holds
+  // complete submissions, so it can't tell us how far along someone is.
+  const drafts = week.draft_picks || {};
 
   const subs = await sbGet(env, 'sdl_push_subscriptions?select=*');
   if (!subs || !subs.length) {
@@ -974,21 +984,31 @@ async function handleScheduled(env) {
   }
 
   let sent = 0, cleaned = 0;
-  // "4 hours to lock" is only true on lock eve. On a holiday-Monday week the
-  // Sunday reminder is ~28 hours out, so it stays the generic nudge.
-  const isLastCall = lockEve;
-  const titleBase = isLastCall ? '⏰ 4 hours to lock' : '📝 Make your picks';
+  // Countdown wording is tied to lock eve, never to a weekday: on a
+  // holiday-Monday week the Sunday reminder is ~28 hours out, so it stays the
+  // generic nudge and Monday carries the countdown.
+  const finalCall = lockEve && etHour === 19;   // 1 hour out
+  const lastCall  = lockEve && etHour === 16;   // 4 hours out
+  const titleBase = finalCall ? '🚨 1 hour to lock'
+    : lastCall ? '⏰ 4 hours to lock'
+    : '📝 Make your picks';
 
   for (const sub of subs) {
     const player = sub.player_name;
     const picks = rosters[player] || [];
     if (picks.length >= MAX_PICKS) continue; // already submitted
+    const started = (drafts[player] || []).length; // partial draft, if any
 
     const payload = JSON.stringify({
       title: titleBase,
-      body: isLastCall
-        ? `${player}, picks lock at 8 PM ET. Get yours in.`
-        : `${player}, draft is open for the week of ${week.week_start}.`,
+      body: finalCall
+        ? `${player}, last chance — picks lock at 8 PM ET. ${started ? `You're ${MAX_PICKS - started} short.` : 'You haven’t started yet.'}`
+        : lastCall
+          ? `${player}, picks lock at 8 PM ET. Get yours in.`
+          : `${player}, draft is open for the week of ${week.week_start}.`,
+      // 4 PM and 7 PM on lock eve share a tag on purpose — the later one
+      // replaces the earlier in the tray rather than stacking a stale
+      // "4 hours to lock" next to "1 hour to lock".
       tag: `pit-${week.week_start}-${etWeekday}`,
       url: '/',
     });
@@ -1010,7 +1030,12 @@ async function handleScheduled(env) {
     }
   }
 
-  await sbInsert(env, 'sdl_push_heartbeats', { ...heartbeat, sent_count: sent, cleaned_count: cleaned }).catch(() => {});
+  // Heartbeat stays one row per day at 16 ET — the 7 PM final-call tick also
+  // lands here, and writing a second row would break "a missing row means the
+  // cron is broken" as a monitoring signal.
+  if (shouldHeartbeat) {
+    await sbInsert(env, 'sdl_push_heartbeats', { ...heartbeat, sent_count: sent, cleaned_count: cleaned }).catch(() => {});
+  }
 }
 
 // ─── FETCH ───────────────────────────────────────────────────────────────────
