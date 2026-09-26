@@ -8,3 +8,8 @@ binding = "ASSETS"
 
 [triggers]
 crons = ["0 * * * *", "30 * * * *"]
+
+# Workers Logs. Without this there is no record of cron invocations or the
+# exceptions they throw — the Sep 13 outage ran two weeks with nothing to read.
+[observability]
+enabled = true
