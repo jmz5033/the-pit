@@ -1310,6 +1310,38 @@ export default {
       });
     }
 
+    if (url.pathname === '/api/recap-backfill' && request.method === 'POST') {
+      // Admin-only: write the recap + headline for a closed week whose close
+      // flow never ran (the Sep 14 and Sep 21 weeks, lost to the late-tick
+      // outage). Deliberately sends NO push — a "week wrapped" notification
+      // two weeks late is noise. Refuses to overwrite an existing recap unless
+      // ?force=1, and refuses weeks that aren't closed with close prices.
+      if (request.headers.get('x-admin-key') !== env.PUSH_ADMIN_KEY || !env.PUSH_ADMIN_KEY) {
+        return json({ error: 'forbidden' }, 403);
+      }
+      const week_start = url.searchParams.get('week') || '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(week_start)) return json({ error: 'pass ?week=YYYY-MM-DD' }, 400);
+      const force = url.searchParams.get('force') === '1';
+      const rows = await sbGet(env, `sdl_weeks?week_start=eq.${week_start}&select=*`);
+      const week = rows && rows[0];
+      if (!week) return json({ error: 'no such week' }, 404);
+      if (week.status !== 'closed' || !Object.keys(week.prices_close || {}).length) {
+        return json({ error: 'week is not closed with close prices' }, 409);
+      }
+      if (week.recap && week.recap_headline && !force) {
+        return json({ skipped: 'recap already exists (pass force=1 to overwrite)', headline: week.recap_headline });
+      }
+      try {
+        const scores = computeScores(week.rosters || {}, week.prices_open || {}, week.prices_close || {});
+        const out = await generateRecapAndHeadline(env, week, scores);
+        const res = await sbPatch(env, `sdl_weeks?id=eq.${week.id}`, { recap: out.recap, recap_headline: out.headline });
+        if (!res.ok) return json({ error: `save failed: ${res.status}` }, 502);
+        return json({ week_start, headline: out.headline, recap: out.recap });
+      } catch (e) {
+        return json({ error: e.message || String(e) }, 500);
+      }
+    }
+
     if (url.pathname === '/api/friday-close' && request.method === 'POST') {
       // Admin-only: run the Friday close flow on demand (snapshot close prices,
       // auto-generate recap + headline, broadcast push). Useful for testing.

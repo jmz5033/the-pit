@@ -188,7 +188,13 @@ catch.
 | `SB_URL`, `SB_KEY` | All Supabase reads/writes from worker |
 | `FH_KEY` | `snapshotClosePrices` Finnhub quotes |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Web push |
-| `PUSH_ADMIN_KEY` | `/api/push`, `/api/friday-close`, `/api/vapid-selftest` |
+| `PUSH_ADMIN_KEY` | `/api/push`, `/api/friday-close`, `/api/vapid-selftest`, `/api/recap-backfill` |
+
+`POST /api/recap-backfill?week=YYYY-MM-DD` (admin) writes the recap + headline
+for a closed week whose close flow never ran, **without** sending a push.
+Refuses non-closed weeks and won't overwrite an existing recap unless
+`&force=1`. Built to repair the Sep 14 / Sep 21 weeks lost to the late-tick
+outage.
 
 ## Push schedule
 
