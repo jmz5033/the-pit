@@ -228,6 +228,14 @@ catch.
   then broadcasts a push with the headline.
 - Heartbeat row written to `sdl_push_heartbeats` once per day at 16 ET only
   (not every hour) — one missing row = cron is broken.
+- **All time gates use `event.scheduledTime`, never `new Date()`.** Cloudflare
+  delivers ticks late — since Sep 13 consistently ~1 min (16:01:09, 16:31:07).
+  Every gate checks `etMinute === 0`/`30`, so reading the wall clock made every
+  gate fail and the job silently did nothing for two weeks: no heartbeat,
+  reminders, close, kickoff or lock summary, and no error, because "nothing to
+  do" is a successful run. Workers Logs (`[observability]` in wrangler.toml)
+  plus the `[cron] tick`/`done` lines are what exposed it — tick and done in the
+  same millisecond means every gate was skipped.
 
 ## Market-holiday handling
 

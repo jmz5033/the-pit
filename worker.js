@@ -913,8 +913,15 @@ async function broadcastPush(env, { title, body, tag }) {
 }
 
 // ─── SCHEDULED REMINDER ──────────────────────────────────────────────────────
-async function handleScheduled(env) {
-  const now = new Date();
+async function handleScheduled(env, scheduledTime) {
+  // Gate on the time the cron was *scheduled* for, never on when it happened
+  // to run. Every gate below checks etMinute === 0 or 30, and since Sep 13
+  // Cloudflare has been delivering ticks ~1 min late (16:01:09, 16:31:07…).
+  // Reading new Date() made etMinute 1, so every gate failed: no heartbeat,
+  // reminder, close, kickoff or lock summary for two weeks, and no error,
+  // because "nothing to do" is a successful run. event.scheduledTime is the
+  // exact :00/:30 instant regardless of delivery lag.
+  const now = scheduledTime ? new Date(scheduledTime) : new Date();
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
     year: 'numeric', month: '2-digit', day: '2-digit',
@@ -1527,7 +1534,7 @@ export default {
     // rejected promise silently, so without this a crash here is invisible.
     console.log(`[cron] tick ${event.cron} at ${new Date(event.scheduledTime).toISOString()}`);
     ctx.waitUntil(
-      handleScheduled(env)
+      handleScheduled(env, event.scheduledTime)
         .then(() => console.log('[cron] done'))
         .catch((e) => console.error(`[cron] handleScheduled threw: ${e && e.stack || e}`))
     );
